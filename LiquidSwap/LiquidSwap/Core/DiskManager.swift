@@ -1,58 +1,90 @@
-//
-//  DiskManager.swift
-//  LiquidSwap
-//
-//  Created by Shwetang Mahudkar on 2025-12-22.
-//
-
-
-import UIKit
+import Foundation
+import SwiftUI
 
 struct DiskManager {
-    static let shared = DiskManager()
     
-    private let fileManager = FileManager.default
-    
-    // Get the path to our app's documents directory
-    private var documentsDirectory: URL? {
-        fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
+    // MARK: - File Paths
+    private static func getDocumentsDirectory() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
     
-    // Save an image and return its filename
-    func saveImage(_ image: UIImage, id: String) -> String? {
-        guard let data = image.jpegData(compressionQuality: 0.5), // Compress to 50%
-              let dir = documentsDirectory else { return nil }
-        
-        let filename = "\(id).jpg"
-        let fileURL = dir.appendingPathComponent(filename)
+    private static func getFileURL(filename: String) -> URL {
+        getDocumentsDirectory().appendingPathComponent(filename)
+    }
+    
+    // MARK: - Generic JSON Saving
+    static func save<T: Encodable>(_ data: T, to filename: String) {
+        do {
+            let url = getFileURL(filename: filename)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            let encodedData = try encoder.encode(data)
+            try encodedData.write(to: url)
+            print("💾 Saved \(filename) to disk.")
+        } catch {
+            print("❌ Error saving \(filename): \(error.localizedDescription)")
+        }
+    }
+    
+    // MARK: - Generic JSON Loading
+    static func load<T: Decodable>(_ filename: String, as type: T.Type) -> T? {
+        let url = getFileURL(filename: filename)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         
         do {
-            try data.write(to: fileURL)
-            print("DiskManager: Saved image to \(filename)")
-            return filename
+            let data = try Data(contentsOf: url)
+            let decodedData = try JSONDecoder().decode(type, from: data)
+            print("📂 Loaded \(filename) from disk.")
+            return decodedData
         } catch {
-            print("DiskManager: Error saving image: \(error)")
+            print("❌ Error loading \(filename): \(error.localizedDescription)")
             return nil
         }
     }
     
-    // Load an image by filename
-    func loadImage(filename: String) -> UIImage? {
-        guard let dir = documentsDirectory else { return nil }
-        let fileURL = dir.appendingPathComponent(filename)
+    // MARK: - Image Saving
+    static func saveImage(image: UIImage, name: String) -> String? {
+        // We save images as "name.jpg"
+        let filename = "\(name).jpg"
+        let url = getFileURL(filename: filename)
         
-        if fileManager.fileExists(atPath: fileURL.path) {
-            return UIImage(contentsOfFile: fileURL.path)
+        // Compress to 0.7 quality to save space
+        if let data = image.jpegData(compressionQuality: 0.7) {
+            do {
+                try data.write(to: url)
+                return filename // Return the filename to store in the Item object
+            } catch {
+                print("❌ Error saving image: \(error.localizedDescription)")
+            }
         }
         return nil
     }
     
-    // Delete an image
-    func deleteImage(filename: String) {
-        guard let dir = documentsDirectory else { return }
-        let fileURL = dir.appendingPathComponent(filename)
+    static func loadImage(named filename: String) -> UIImage? {
+        let url = getFileURL(filename: filename)
+        if FileManager.default.fileExists(atPath: url.path) {
+            return UIImage(contentsOfFile: url.path)
+        }
+        return nil
+    }
+    
+    // MARK: - NUKE DATA (The Missing Function)
+    static func clearAllData() {
+        let fileManager = FileManager.default
+        let folderURL = getDocumentsDirectory()
         
-        try? fileManager.removeItem(at: fileURL)
-        print("DiskManager: Deleted image \(filename)")
+        do {
+            // Get all files in the documents directory
+            let fileURLs = try fileManager.contentsOfDirectory(at: folderURL, includingPropertiesForKeys: nil, options: [])
+            
+            // Loop through and delete them all
+            for fileURL in fileURLs {
+                try fileManager.removeItem(at: fileURL)
+            }
+            print("💥 DiskManager: All local data nuked successfully.")
+            
+        } catch {
+            print("❌ Error clearing data: \(error.localizedDescription)")
+        }
     }
 }

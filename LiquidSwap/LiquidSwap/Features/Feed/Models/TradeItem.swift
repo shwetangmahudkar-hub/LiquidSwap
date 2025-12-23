@@ -1,73 +1,54 @@
 import SwiftUI
+import CoreLocation
 
-struct TradeItem: Identifiable, Hashable, Equatable, Codable {
-    var id = UUID()
-    let title: String
-    let description: String
-    let distance: String
-    let category: String
-    let ownerName: String
-    let systemImage: String
-    let colorString: String
+struct TradeItem: Identifiable, Codable, Hashable {
+    var id: UUID
+    var ownerId: UUID // Links to the user who posted it
+    var title: String
+    var description: String
+    var condition: String
+    var category: String
+    var imageUrl: String? // The Cloud URL
+    var createdAt: Date
     
-    // NEW: We only save the filename, not the heavy data
-    var imageFilename: String?
+    // We keep this for backward compatibility with local mock data if needed
+    var distance: Double = 0.0
     
-    // Computed: Fetch from Disk on demand
-    var uiImage: UIImage? {
-        if let filename = imageFilename {
-            return DiskManager.shared.loadImage(filename: filename)
-        }
-        return nil
+    enum CodingKeys: String, CodingKey {
+        case id
+        case ownerId = "owner_id"
+        case title
+        case description
+        case condition
+        case category
+        case imageUrl = "image_url"
+        case createdAt = "created_at"
     }
     
-    // Helper for Color
-    var color: Color {
-        switch colorString {
-        case "blue": return .blue
-        case "green": return .green
-        case "orange": return .orange
-        case "brown": return .brown
-        case "yellow": return .yellow
-        case "cyan": return .cyan
-        default: return .cyan
-        }
-    }
-    
-    // Init for Creating Items
-    init(title: String, description: String, distance: String, category: String, ownerName: String, systemImage: String, color: Color, uiImage: UIImage? = nil) {
+    // Default Initializer
+    init(id: UUID = UUID(), ownerId: UUID = UUID(), title: String, description: String, condition: String, category: String, imageUrl: String?, createdAt: Date = Date(), distance: Double = 0.0) {
+        self.id = id
+        self.ownerId = ownerId
         self.title = title
         self.description = description
-        self.distance = distance
+        self.condition = condition
         self.category = category
-        self.ownerName = ownerName
-        self.systemImage = systemImage
-        
-        // Save Color
-        switch color {
-        case .blue: self.colorString = "blue"
-        case .green: self.colorString = "green"
-        case .orange: self.colorString = "orange"
-        case .brown: self.colorString = "brown"
-        case .yellow: self.colorString = "yellow"
-        default: self.colorString = "cyan"
-        }
-        
-        // Save Image to Disk immediately
-        if let image = uiImage {
-            // Use ID as filename to ensure uniqueness
-            self.imageFilename = DiskManager.shared.saveImage(image, id: self.id.uuidString)
-        }
+        self.imageUrl = imageUrl
+        self.createdAt = createdAt
+        self.distance = distance
     }
-}
-
-// Mock Data
-extension TradeItem {
-    static let mockData: [TradeItem] = [
-        TradeItem(title: "Vintage Film Camera", description: "Canon AE-1", distance: "1.2km", category: "Electronics", ownerName: "Sarah J.", systemImage: "camera.fill", color: .orange),
-        TradeItem(title: "Monstera Plant", description: "Healthy plant", distance: "500m", category: "Plants", ownerName: "Mike R.", systemImage: "leaf.fill", color: .green),
-        TradeItem(title: "Leather Jacket", description: "Size M", distance: "3.5km", category: "Fashion", ownerName: "Alex T.", systemImage: "tshirt", color: .brown),
-        TradeItem(title: "Gaming Headset", description: "Noise cancelling", distance: "8km", category: "Tech", ownerName: "Davide V.", systemImage: "headphones", color: .blue),
-        TradeItem(title: "Mid-Century Lamp", description: "Needs bulb", distance: "2.1km", category: "Decor", ownerName: "Emily W.", systemImage: "lamp.table.fill", color: .yellow)
-    ]
+    
+    // Helper to get a valid URL object
+    var imageURLObj: URL? {
+        guard let string = imageUrl else { return nil }
+        return URL(string: string)
+    }
+    
+    // Mock Data Generator (Updated for Cloud Model)
+    static func generateMockItems() -> [TradeItem] {
+        return [
+            TradeItem(title: "Vintage Camera", description: "Film camera.", condition: "Used", category: "Electronics", imageUrl: nil, distance: 2.5),
+            TradeItem(title: "Succulent", description: "Nice plant.", condition: "New", category: "Plants", imageUrl: nil, distance: 0.5)
+        ]
+    }
 }

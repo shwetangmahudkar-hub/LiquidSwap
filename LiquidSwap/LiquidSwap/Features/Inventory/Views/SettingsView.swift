@@ -1,102 +1,92 @@
-//
-//  SettingsView.swift
-//  LiquidSwap
-//
-//  Created by Shwetang Mahudkar on 2025-12-22.
-//
-
-
 import SwiftUI
+import Supabase
 
-struct SettingsView: View {
-    @Environment(\.dismiss) var dismiss
-    @ObservedObject var chatManager = ChatManager.shared
+// RENAMED STRUCT: ProfileSettingsView
+struct ProfileSettingsView: View {
+    // 1. Access the Auth Logic
+    @EnvironmentObject var authVM: AuthViewModel
     
-    // Alert State
+    // 2. The Binding variable (The connector)
+    @Binding var showSettings: Bool
+    
     @State private var showResetAlert = false
     
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
-                
-                List {
-                    // Section 1: Simulation Controls
-                    Section(header: Text("Simulation Control")) {
-                        Toggle("Enable AI Bot Replies", isOn: $chatManager.areBotsEnabled)
-                            .tint(.cyan)
-                    }
-                    
-                    // Section 2: App Info
-                    Section(header: Text("Storage & Data")) {
+            List {
+                // --- SECTION 1: ACCOUNT ---
+                Section("Account") {
+                    if let email = authVM.session?.user.email {
                         HStack {
-                            Text("Cached Images")
-                            Spacer()
-                            // Mock value for MVP
-                            Text("12.4 MB")
+                            Image(systemName: "person.circle.fill")
                                 .foregroundStyle(.gray)
-                        }
-                        
-                        HStack {
-                            Text("Total Trades")
-                            Spacer()
-                            Text("\(UserManager.shared.tradeCount)")
+                            Text(email)
+                                .font(.subheadline)
                                 .foregroundStyle(.gray)
                         }
                     }
                     
-                    // Section 3: Danger Zone
-                    Section(header: Text("Danger Zone").foregroundStyle(.red)) {
-                        Button(action: { showResetAlert = true }) {
-                            HStack {
-                                Text("Reset All Data")
-                                    .bold()
-                                    .foregroundStyle(.red)
-                                Spacer()
-                                Image(systemName: "trash")
-                                    .foregroundStyle(.red)
-                            }
+                    Button(action: {
+                        Task {
+                            await authVM.signOut()
+                            showSettings = false // Close settings to show login
                         }
-                    }
-                    
-                    // Footer
-                    Section {
+                    }) {
                         HStack {
+                            Text("Sign Out")
+                                .foregroundStyle(.red)
                             Spacer()
-                            Text("Liquid Swap v1.0 (MVP)")
-                                .font(.caption)
-                                .foregroundStyle(.gray)
-                            Spacer()
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .foregroundStyle(.red)
                         }
                     }
-                    .listRowBackground(Color.clear)
                 }
-                .scrollContentBackground(.hidden) // Glass look
+                
+                // --- SECTION 2: SIMULATION CONTROLS ---
+                Section("Simulation & Debug") {
+                    Button(role: .destructive) {
+                        showResetAlert = true
+                    } label: {
+                        HStack {
+                            Text("Factory Reset (Nuke Data)")
+                            Spacer()
+                            Image(systemName: "trash")
+                        }
+                    }
+                }
+                
+                Section("About") {
+                    HStack {
+                        Text("Version")
+                        Spacer()
+                        Text("1.0.0 (Cloud Beta)")
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .foregroundStyle(.cyan)
+                    Button("Done") {
+                        showSettings = false
+                    }
                 }
             }
-            // Reset Confirmation Alert
-            .alert("Factory Reset", isPresented: $showResetAlert) {
+            // Alert for Nuking Data
+            .alert("Reset Simulation?", isPresented: $showResetAlert) {
                 Button("Cancel", role: .cancel) { }
-                Button("Reset Everything", role: .destructive) {
-                    // Trigger the Nuke
-                    UserManager.shared.resetAllData()
-                    // Force app close or just dismiss (Onboarding will appear instantly because isFirstLaunch is true)
-                    dismiss() 
+                Button("Nuke It", role: .destructive) {
+                    DiskManager.clearAllData()
+                    showSettings = false
                 }
             } message: {
-                Text("This will delete your profile, inventory, trade history, and all chat messages. This cannot be undone.")
+                Text("This will delete all local cached items and chat history. This action cannot be undone.")
             }
         }
     }
 }
 
 #Preview {
-    SettingsView()
+    ProfileSettingsView(showSettings: .constant(true))
+        .environmentObject(AuthViewModel())
 }

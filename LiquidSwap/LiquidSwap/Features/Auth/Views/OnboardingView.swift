@@ -1,117 +1,134 @@
-//
-//  OnboardingView.swift
-//  LiquidSwap
-//
-//  Created by Shwetang Mahudkar on 2025-12-22.
-//
-
-
 import SwiftUI
-import PhotosUI
 
 struct OnboardingView: View {
-    @State private var name: String = ""
-    @State private var selectedItem: PhotosPickerItem? = nil
-    @State private var selectedImage: Image? = nil
-    @State private var uiImage: UIImage? = nil
+    @AppStorage("isOnboarding") var isOnboarding: Bool = true
+    @ObservedObject var userManager = UserManager.shared
+    
+    @State private var name = ""
+    @State private var selectedImage: UIImage?
+    @State private var isShowingImagePicker = false
     
     var body: some View {
         ZStack {
-            // Layer 1: Animated Background
+            // Background
             LiquidBackground()
             
-            // Layer 2: Content
-            VStack(spacing: 40) {
+            VStack(spacing: 30) {
+                Spacer()
                 
+                // Title
                 VStack(spacing: 10) {
                     Text("Welcome to Liquid Swap")
-                        .font(.system(size: 32, weight: .bold))
-                        .foregroundStyle(.white)
+                        .font(.largeTitle)
+                        .bold()
                         .multilineTextAlignment(.center)
+                        .foregroundStyle(.white)
                     
-                    Text("The Zero-Capital Barter Ecosystem")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.7))
+                    Text("Let's set up your profile.")
+                        .font(.title3)
+                        .foregroundStyle(.white.opacity(0.8))
                 }
-                .padding(.top, 60)
                 
-                // Avatar Picker
-                VStack(spacing: 16) {
+                // Profile Image Picker
+                Button(action: {
+                    isShowingImagePicker = true
+                }) {
                     ZStack {
-                        if let selectedImage {
-                            selectedImage
+                        if let image = selectedImage {
+                            Image(uiImage: image)
                                 .resizable()
                                 .scaledToFill()
-                                .frame(width: 150, height: 150)
+                                .frame(width: 120, height: 120)
                                 .clipShape(Circle())
-                                .overlay(Circle().stroke(.cyan, lineWidth: 3))
+                                .overlay(Circle().stroke(Color.white, lineWidth: 4))
                         } else {
                             Circle()
                                 .fill(.ultraThinMaterial)
-                                .frame(width: 150, height: 150)
-                                .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
+                                .frame(width: 120, height: 120)
                                 .overlay(
                                     Image(systemName: "camera.fill")
-                                        .font(.largeTitle)
-                                        .foregroundStyle(.white.opacity(0.5))
+                                        .font(.title)
+                                        .foregroundStyle(.white)
                                 )
+                                .overlay(Circle().stroke(Color.white.opacity(0.5), lineWidth: 2))
                         }
                     }
-                    .shadow(radius: 10)
-                    
-                    PhotosPicker(selection: $selectedItem, matching: .images) {
-                        Text(selectedImage == nil ? "Upload Photo" : "Change Photo")
-                            .font(.headline)
-                            .foregroundStyle(.cyan)
-                    }
                 }
+                .shadow(radius: 10)
                 
                 // Name Input
-                VStack(alignment: .leading) {
-                    Text("What should we call you?")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.7))
-                        .padding(.leading)
-                    
-                    TextField("", text: $name, prompt: Text("Your Name").foregroundStyle(.white.opacity(0.3)))
-                        .padding()
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(12)
-                        .foregroundStyle(.white)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(.white.opacity(0.2), lineWidth: 1)
-                        )
-                }
-                .padding(.horizontal, 40)
+                TextField("Enter your username", text: $name)
+                    .padding()
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(12)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 40)
+                    .textInputAutocapitalization(.words)
                 
                 Spacer()
                 
-                // Get Started Button
+                // Finish Button
                 Button(action: {
-                    UserManager.shared.completeOnboarding(name: name, image: uiImage)
+                    // FIXED: Updated call to match new UserManager signature
+                    userManager.completeOnboarding(
+                        username: name.isEmpty ? "Trader" : name,
+                        bio: "Ready to trade!", // Default bio since this view doesn't ask for one
+                        image: selectedImage
+                    )
+                    isOnboarding = false
                 }) {
-                    Text("Enter Ecosystem")
+                    Text("Start Swapping")
+                        .font(.headline)
                         .bold()
+                        .foregroundStyle(.black)
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(name.isEmpty ? Color.gray.opacity(0.5) : Color.cyan)
-                        .cornerRadius(30)
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 40)
+                        .background(Color.cyan)
+                        .cornerRadius(15)
+                        .shadow(color: .cyan.opacity(0.5), radius: 10)
                 }
-                .disabled(name.isEmpty)
-                .padding(.bottom, 50)
+                .padding(.horizontal, 40)
+                .padding(.bottom, 40)
             }
         }
-        .onChange(of: selectedItem) { newItem in
-            Task {
-                if let data = try? await newItem?.loadTransferable(type: Data.self),
-                   let uiImg = UIImage(data: data) {
-                    self.uiImage = uiImg
-                    self.selectedImage = Image(uiImage: uiImg)
-                }
+        .sheet(isPresented: $isShowingImagePicker) {
+            ImagePicker(image: $selectedImage)
+        }
+    }
+}
+
+// Simple Image Picker Helper
+struct ImagePicker: UIViewControllerRepresentable {
+    @Binding var image: UIImage?
+    @Environment(\.dismiss) private var dismiss
+    
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.delegate = context.coordinator
+        picker.allowsEditing = true
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: ImagePicker
+        
+        init(_ parent: ImagePicker) {
+            self.parent = parent
+        }
+        
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+            if let editedImage = info[.editedImage] as? UIImage {
+                parent.image = editedImage
+            } else if let originalImage = info[.originalImage] as? UIImage {
+                parent.image = originalImage
             }
+            parent.dismiss()
         }
     }
 }

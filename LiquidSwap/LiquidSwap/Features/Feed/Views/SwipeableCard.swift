@@ -1,111 +1,103 @@
 import SwiftUI
 
+// 1. Define the Enum here so it is available to FeedView too
+enum SwipeDirection {
+    case left
+    case right
+}
+
 struct SwipeableCard: View {
     let item: TradeItem
-    var onRemove: (SwipeDirection) -> Void
-    var onTap: () -> Void
+    
+    // 2. Closure to tell the parent (FeedView) when a swipe finishes
+    var onSwipe: (SwipeDirection) -> Void
     
     @State private var offset = CGSize.zero
     
     var body: some View {
         ZStack {
-            GlassCard {
-                VStack(alignment: .leading, spacing: 20) {
-                    ZStack {
-                        // Background Color
-                        RoundedRectangle(cornerRadius: 15)
-                            .fill(item.color.opacity(0.3))
-                            .frame(height: 320)
-                        
-                        // Smart Image Loader
-                        AsyncImageView(item: item)
-                            .frame(height: 320) // Match the background height
-                            .clipped()          // Ensure it doesn't spill out
-                            .cornerRadius(15)   // Match the rounding
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(item.category.uppercased())
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .foregroundStyle(.cyan)
-                            .tracking(2)
-                        
+            // Background Card
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color(.systemGray6))
+                .shadow(radius: 4)
+            
+            // Image Layer - FIXED: Uses imageUrl
+            AsyncImageView(filename: item.imageUrl)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+                .cornerRadius(20)
+            
+            // Gradient Overlay
+            LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .center, endPoint: .bottom)
+                .cornerRadius(20)
+            
+            // Text Info
+            VStack(alignment: .leading) {
+                Spacer()
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(item.title)
                             .font(.title)
-                            .fontWeight(.bold)
+                            .bold()
                             .foregroundStyle(.white)
                         
-                        HStack {
-                            Image(systemName: "location.fill")
-                                .font(.caption)
-                            Text(item.distance)
-                                .font(.subheadline)
-                            Spacer()
-                            Text("Owned by \(item.ownerName)")
-                                .font(.caption)
-                                .foregroundStyle(.white.opacity(0.6))
-                        }
-                        .foregroundStyle(.white.opacity(0.8))
+                        Text("\(item.category) • \(String(format: "%.1f", item.distance)) km")
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.8))
                     }
+                    Spacer()
+                    
+                    // Info Icon
+                    Image(systemName: "info.circle")
+                        .font(.title2)
+                        .foregroundStyle(.white)
                 }
+                .padding()
             }
-            .overlay(
-                ZStack {
-                    if offset.width > 0 {
-                        Text("LIKE")
-                            .font(.largeTitle)
-                            .fontWeight(.heavy)
-                            .foregroundStyle(.green)
-                            .rotationEffect(.degrees(-15))
-                            .offset(x: -80, y: -100)
-                            .opacity(Double(offset.width / 150))
-                    } else if offset.width < 0 {
-                        Text("NOPE")
-                            .font(.largeTitle)
-                            .fontWeight(.heavy)
-                            .foregroundStyle(.red)
-                            .rotationEffect(.degrees(15))
-                            .offset(x: 80, y: -100)
-                            .opacity(Double(abs(offset.width) / 150))
-                    }
-                }
-            )
+            
+            // Swipe Overlay Indicators (Like/Pass)
+            if offset.width > 0 {
+                // LIKE (Right)
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 80))
+                    .foregroundStyle(.green.opacity(0.8))
+                    .opacity(Double(offset.width / 150))
+            } else if offset.width < 0 {
+                // PASS (Left)
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 80))
+                    .foregroundStyle(.red.opacity(0.8))
+                    .opacity(Double(abs(offset.width) / 150))
+            }
         }
-        .rotationEffect(.degrees(Double(offset.width / 20)))
         .offset(x: offset.width, y: offset.height * 0.4)
-        .opacity(2 - Double(abs(offset.width / 100)))
-        // --- GESTURE LOGIC START ---
-        // 1. Tap Gesture (Simultaneous so it doesn't block Drag)
-        .simultaneousGesture(
-            TapGesture().onEnded {
-                // Only trigger tap if we haven't dragged much
-                if abs(offset.width) < 5 && abs(offset.height) < 5 {
-                    onTap()
-                }
-            }
-        )
-        // 2. Drag Gesture (High Priority so it starts instantly)
-        .highPriorityGesture(
+        .rotationEffect(.degrees(Double(offset.width / 20)))
+        .gesture(
             DragGesture()
                 .onChanged { gesture in
                     offset = gesture.translation
                 }
                 .onEnded { _ in
-                    if abs(offset.width) > 100 {
-                        // Swipe Success
-                        Haptics.shared.playMedium()
-                        let direction: SwipeDirection = offset.width > 0 ? .right : .left
-                        onRemove(direction)
-                    } else {
-                        // Snap Back
-                        Haptics.shared.playLight()
-                        withAnimation(.spring()) {
-                            offset = .zero
-                        }
+                    withAnimation {
+                        swipeCard()
                     }
                 }
         )
-        // --- GESTURE LOGIC END ---
+    }
+    
+    // Logic to decide if card flies away or snaps back
+    func swipeCard() {
+        if offset.width > 150 {
+            // Swipe Right
+            offset = CGSize(width: 500, height: 0)
+            onSwipe(.right)
+        } else if offset.width < -150 {
+            // Swipe Left
+            offset = CGSize(width: -500, height: 0)
+            onSwipe(.left)
+        } else {
+            // Snap Back
+            offset = .zero
+        }
     }
 }

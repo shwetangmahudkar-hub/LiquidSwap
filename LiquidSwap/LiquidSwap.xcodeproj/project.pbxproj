@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		5C1D95AD2EFAFD3F00769CDD /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 5C1D95AC2EFAFD3F00769CDD /* Supabase */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		5C5120222EF9C5B0006A0B55 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5C1D95AD2EFAFD3F00769CDD /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = LiquidSwap;
 			packageProductDependencies = (
+				5C1D95AC2EFAFD3F00769CDD /* Supabase */,
 			);
 			productName = LiquidSwap;
 			productReference = 5C5120142EF9C5AE006A0B55 /* LiquidSwap.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = 5C51200B2EF9C5AE006A0B55;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				5C1D95AB2EFAFD3F00769CDD /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5C5120152EF9C5AE006A0B55 /* Products */;
 			projectDirPath = "";
@@ -578,6 +587,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		5C1D95AB2EFAFD3F00769CDD /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		5C1D95AC2EFAFD3F00769CDD /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5C1D95AB2EFAFD3F00769CDD /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 5C51200C2EF9C5AE006A0B55 /* Project object */;
 }

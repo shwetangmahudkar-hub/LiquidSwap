@@ -1,69 +1,118 @@
 import SwiftUI
 import Combine
+import Supabase
 
 class ChatManager: ObservableObject {
     static let shared = ChatManager()
+    private let client = SupabaseConfig.client
     
-    // NEW: Bot Toggle
-    @Published var areBotsEnabled: Bool = true
+    @Published var conversations: [UUID: [Message]] = [:]
     
-    @Published var conversations: [String: [Message]] = [:] {
-        didSet {
-            saveChats()
+    // 1. Keep a reference to the active channel
+    private var channel: RealtimeChannelV2?
+    private var isSetup = false
+    
+    private init() {}
+    
+    func setup() async {
+        // Double-check: If already setup, stop.
+        if isSetup { return }
+        isSetup = true
+        
+        await fetchAllMessages()
+        await subscribeToRealtime()
+    }
+    
+    // MARK: - Actions
+    
+    @MainActor
+    func sendMessage(_ text: String, to receiverId: UUID) async {
+        guard let myId = UserManager.shared.currentUser?.id else { return }
+        
+        let newMessage = Message(
+            id: UUID(),
+            senderId: myId,
+            receiverId: receiverId,
+            content: text,
+            createdAt: Date()
+        )
+        
+        appendMessage(newMessage)
+        
+        do {
+            try await client
+                .from("messages")
+                .insert(newMessage)
+                .execute()
+            print("🚀 Message sent!")
+        } catch {
+            print("❌ Failed to send message: \(error)")
         }
     }
     
-    private let saveKey = "saved_chats"
+    // MARK: - Fetching & Realtime
     
-    private init() {
-        if let data = UserDefaults.standard.data(forKey: "saved_chats"),
-           let decoded = try? JSONDecoder().decode([String: [Message]].self, from: data) {
-            self.conversations = decoded
-        }
-    }
-    
-    // --- ACTIONS ---
-    
-    func sendMessage(_ text: String, to partner: String) {
-        let newMessage = Message(content: text, isCurrentUser: true)
+    @MainActor
+    func fetchAllMessages() async {
+        guard let myId = UserManager.shared.currentUser?.id else { return }
         
-        if conversations[partner] == nil {
-            conversations[partner] = []
-        }
-        
-        conversations[partner]?.append(newMessage)
-        
-        // NEW: Check if bots are allowed to reply
-        if areBotsEnabled {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                self.receiveBotReply(from: partner, context: text)
+        do {
+            let messages: [Message] = try await client
+                .from("messages")
+                .select()
+                .or("sender_id.eq.\(myId),receiver_id.eq.\(myId)")
+                .order("created_at", ascending: true)
+                .execute()
+                .value
+            
+            self.conversations = Dictionary(grouping: messages) { msg in
+                return msg.senderId == myId ? msg.receiverId : msg.senderId
             }
+            
+        } catch {
+            print("❌ Error fetching messages: \(error)")
         }
     }
     
-    private func receiveBotReply(from partner: String, context: String) {
-        let replyText = generateBotResponse(for: context)
-        let reply = Message(content: replyText, isCurrentUser: false)
+    func subscribeToRealtime() async {
+        // FIXED: Remove any existing channel before creating a new one
+        if let existingChannel = channel {
+            await existingChannel.unsubscribe()
+        }
         
-        withAnimation {
-            conversations[partner]?.append(reply)
-            Haptics.shared.playLight()
+        // Create the new channel definition
+        let newChannel = client.channel("public:messages")
+        self.channel = newChannel
+        
+        // Attach the listener BEFORE subscribing
+        let changeStream = newChannel.postgresChange(
+            AnyAction.self,
+            schema: "public",
+            table: "messages"
+        )
+        
+        // Subscribe now
+        do {
+            try await newChannel.subscribeWithError()
+            print("✅ Subscribed to realtime messages")
+        } catch {
+            print("❌ Failed to subscribe to realtime: \(error)")
+            return
+        }
+        
+        // Listen for changes
+        for await _ in changeStream {
+            await fetchAllMessages()
         }
     }
     
-    private func saveChats() {
-        if let encoded = try? JSONEncoder().encode(conversations) {
-            UserDefaults.standard.set(encoded, forKey: saveKey)
+    private func appendMessage(_ message: Message) {
+        guard let myId = UserManager.shared.currentUser?.id else { return }
+        let partnerId = message.senderId == myId ? message.receiverId : message.senderId
+        
+        if conversations[partnerId] == nil {
+            conversations[partnerId] = []
         }
-    }
-    
-    private func generateBotResponse(for input: String) -> String {
-        let lowerInput = input.lowercased()
-        if lowerInput.contains("available") { return "Yes, it is still available! When can you meet?" }
-        else if lowerInput.contains("trade") { return "I'm open to trades. What do you have?" }
-        else if lowerInput.contains("where") || lowerInput.contains("location") { return "I'm located downtown, near the park." }
-        else if lowerInput.contains("price") || lowerInput.contains("much") { return "I'm mostly looking to swap, but make me an offer." }
-        else if lowerInput.contains("hi") || lowerInput.contains("hello") { return "Hey there! Interested in the item?" }
-        else { return "Sounds good! Let me know." }
+        conversations[partnerId]?.append(message)
     }
 }

@@ -1,25 +1,22 @@
 import SwiftUI
 
 struct Message: Identifiable, Codable, Hashable {
-    let id: UUID
-    let content: String
-    let isCurrentUser: Bool
-    let timestamp: Date
+    var id: UUID
+    var senderId: UUID
+    var receiverId: UUID
+    var content: String
+    var createdAt: Date
     
-    // NEW: Status for "Read" receipts
-    var status: MessageStatus = .sent
-    
-    init(id: UUID = UUID(), content: String, isCurrentUser: Bool, timestamp: Date = Date(), status: MessageStatus = .sent) {
-        self.id = id
-        self.content = content
-        self.isCurrentUser = isCurrentUser
-        self.timestamp = timestamp
-        self.status = status
+    enum CodingKeys: String, CodingKey {
+        case id
+        case senderId = "sender_id"
+        case receiverId = "receiver_id"
+        case content
+        case createdAt = "created_at"
     }
-}
-
-enum MessageStatus: String, Codable {
-    case sent
-    case delivered
-    case read
+    
+    // Helper to check if I sent this message
+    var isCurrentUser: Bool {
+        return senderId == UserManager.shared.currentUser?.id
+    }
 }

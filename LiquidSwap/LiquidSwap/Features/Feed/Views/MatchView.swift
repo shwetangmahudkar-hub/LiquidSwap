@@ -1,106 +1,67 @@
 import SwiftUI
 
 struct MatchView: View {
-    let item: TradeItem
-    var onChat: () -> Void
-    var onKeepSwiping: () -> Void
-    
-    @State private var animate = false
+    var item: TradeItem
+    @Binding var showMatch: Bool
     
     var body: some View {
         ZStack {
-            // 1. Frosted Glass Background (Darker)
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .ignoresSafeArea()
-                .opacity(0.95)
-            
-            // 2. Liquid Splash Effects
-            LiquidBackground()
-                .opacity(0.3)
+            // Dark Overlay
+            Color.black.opacity(0.85).ignoresSafeArea()
             
             VStack(spacing: 30) {
-                // Title Animation
+                // Celebration Text
                 Text("It's a Match!")
-                    .font(.system(size: 40, weight: .black))
+                    .font(.system(size: 40, weight: .black, design: .rounded))
+                    .foregroundStyle(
+                        LinearGradient(colors: [.cyan, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    )
+                    .shadow(color: .cyan.opacity(0.5), radius: 10)
+                
+                // The Item Image - FIXED: Uses imageUrl
+                AsyncImageView(filename: item.imageUrl)
+                    .frame(width: 250, height: 250)
+                    .cornerRadius(20)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(
+                                LinearGradient(colors: [.cyan, .purple], startPoint: .topLeading, endPoint: .bottomTrailing),
+                                lineWidth: 4
+                            )
+                    )
+                    .shadow(color: .purple.opacity(0.5), radius: 20)
+                
+                Text("You matched with this \(item.title)!")
+                    .font(.headline)
                     .foregroundStyle(.white)
-                    .scaleEffect(animate ? 1.0 : 0.5)
-                    .opacity(animate ? 1.0 : 0.0)
-                    .shadow(color: .cyan, radius: 20)
-                
-                Text("You and \(item.ownerName) like each other's items.")
-                    .font(.body)
-                    .foregroundStyle(.white.opacity(0.8))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                
-                // Item Images Collision Animation
-                HStack(spacing: -30) {
-                    // Your Item (Placeholder)
-                    Circle()
-                        .fill(Color.purple.opacity(0.5))
-                        .frame(width: 120, height: 120)
-                        .overlay(
-                            Image(systemName: "cube.box.fill")
-                                .font(.system(size: 50))
-                                .foregroundStyle(.white)
-                        )
-                        .overlay(Circle().stroke(.white, lineWidth: 4))
-                        .offset(x: animate ? 0 : -100)
-                    
-                    // Their Item
-                    Circle()
-                        .fill(item.color.opacity(0.5))
-                        .frame(width: 120, height: 120)
-                        .overlay(
-                            Image(systemName: item.systemImage)
-                                .font(.system(size: 50))
-                                .foregroundStyle(.white)
-                        )
-                        .overlay(Circle().stroke(.white, lineWidth: 4))
-                        .offset(x: animate ? 0 : 100)
-                }
-                .padding(.vertical, 40)
                 
                 // Action Buttons
                 VStack(spacing: 16) {
-                    Button(action: onChat) {
-                        Text("Send a Message")
-                            .bold()
+                    Button(action: {
+                        // In a real app, go to chat
+                        showMatch = false
+                    }) {
+                        Text("Send Message")
+                            .font(.headline)
+                            .foregroundStyle(.black)
                             .frame(maxWidth: .infinity)
                             .padding()
                             .background(Color.cyan)
-                            .cornerRadius(30)
-                            .foregroundStyle(.black)
+                            .cornerRadius(12)
                     }
                     
-                    Button(action: onKeepSwiping) {
+                    Button(action: { showMatch = false }) {
                         Text("Keep Swiping")
-                            .bold()
+                            .font(.subheadline)
                             .foregroundStyle(.white.opacity(0.7))
                     }
                 }
                 .padding(.horizontal, 40)
-                .opacity(animate ? 1.0 : 0.0)
-                .offset(y: animate ? 0 : 50)
-            }
-        }
-        // CORRECT PLACEMENT of onAppear
-        .onAppear {
-            // Trigger Haptics
-            Haptics.shared.playSuccess()
-            
-            withAnimation(.spring(response: 0.6, dampingFraction: 0.6)) {
-                animate = true
             }
         }
     }
 }
 
 #Preview {
-    MatchView(
-        item: TradeItem.mockData[0],
-        onChat: {},
-        onKeepSwiping: {}
-    )
+    MatchView(item: TradeItem.generateMockItems()[0], showMatch: .constant(true))
 }

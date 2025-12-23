@@ -1,14 +1,13 @@
-//
-//  LiquidSwapApp.swift
-//  LiquidSwap
-//
-//  Created by Shwetang Mahudkar on 2025-12-22.
-//
-
 import SwiftUI
 
 @main
-struct LiquidSwapApp: App {
+struct LiquidSwapApp: App { // Or your specific struct name
+    
+    init() {
+        // Simple "Ping" to see if credentials are valid format
+        print("⚡️ Supabase Client Initialized: \(SupabaseConfig.supabaseURL)")
+    }
+    
     var body: some Scene {
         WindowGroup {
             ContentView()

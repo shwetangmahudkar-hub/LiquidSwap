@@ -2,84 +2,87 @@ import SwiftUI
 
 struct ChatListView: View {
     @ObservedObject var chatManager = ChatManager.shared
-    
-    // Mock List of People (Ideally this would come from your Matches)
-    let activeChats = ["Sarah J.", "Mike R.", "Alex T."]
+    @ObservedObject var userManager = UserManager.shared
     
     var body: some View {
-        ZStack {
-            LiquidBackground()
-            
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text("Messages")
-                        .font(.largeTitle)
-                        .bold()
-                        .foregroundStyle(.white)
-                        .padding(.horizontal)
-                        .padding(.top, 20)
-                    
-                    VStack(spacing: 2) {
-                        ForEach(activeChats, id: \.self) { partner in
-                            NavigationLink(value: ChatRoomRoute(partnerName: partner)) {
-                                ChatRow(partner: partner)
-                            }
-                            Divider().background(.white.opacity(0.1))
-                        }
-                    }
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(20)
-                    .padding()
-                }
-            }
-        }
-        .navigationTitle("") // Hide default
-    }
-}
-
-struct ChatRow: View {
-    let partner: String
-    @ObservedObject var chatManager = ChatManager.shared
-    
-    var lastMessage: String {
-        chatManager.conversations[partner]?.last?.content ?? "No messages yet"
-    }
-    
-    var timeString: String {
-        if let date = chatManager.conversations[partner]?.last?.timestamp {
-            let formatter = DateFormatter()
-            formatter.timeStyle = .short
-            return formatter.string(from: date)
-        }
-        return "Now"
-    }
-    
-    var body: some View {
-        HStack(spacing: 16) {
-            // Avatar Placeholder
-            Circle()
-                .fill(Color.cyan.opacity(0.3))
-                .frame(width: 60, height: 60)
-                .overlay(Text(partner.prefix(1)).bold().foregroundStyle(.white))
-            
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(partner)
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                    Spacer()
-                    Text(timeString)
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.6))
-                }
+        NavigationStack {
+            ZStack {
+                LiquidBackground()
                 
-                Text(lastMessage)
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.8))
-                    .lineLimit(1)
+                if chatManager.conversations.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "bubble.left.and.bubble.right")
+                            .font(.system(size: 60))
+                            .foregroundStyle(.gray)
+                        Text("No messages yet")
+                            .foregroundStyle(.gray)
+                        Text("Match with someone to start chatting!")
+                            .font(.caption)
+                            .foregroundStyle(.gray.opacity(0.8))
+                    }
+                } else {
+                    ScrollView {
+                        VStack(spacing: 2) {
+                            // Loop through all conversation partners
+                            ForEach(Array(chatManager.conversations.keys), id: \.self) { partnerId in
+                                NavigationLink(destination: ChatRoomView(partnerId: partnerId)) {
+                                    ChatRow(partnerId: partnerId)
+                                }
+                                Divider().background(.white.opacity(0.1))
+                            }
+                        }
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(20)
+                        .padding()
+                    }
+                }
+            }
+            .navigationTitle("Messages")
+            .refreshable {
+                await chatManager.fetchAllMessages()
+            }
+            // ADD THIS BLOCK:
+            .task {
+                await chatManager.setup()
             }
         }
-        .padding()
-        .contentShape(Rectangle()) // Make full row tappable
+    }
+    
+    struct ChatRow: View {
+        let partnerId: UUID
+        @ObservedObject var chatManager = ChatManager.shared
+        
+        var lastMessage: Message? {
+            chatManager.conversations[partnerId]?.last
+        }
+        
+        var body: some View {
+            HStack(spacing: 16) {
+                // Avatar Placeholder
+                Circle()
+                    .fill(Color.cyan.opacity(0.3))
+                    .frame(width: 60, height: 60)
+                    .overlay(Image(systemName: "person.fill").foregroundStyle(.white))
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        // In a real app, we would fetch the partner's Name here
+                        Text("User \(partnerId.uuidString.prefix(4))")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                        Spacer()
+                    }
+                    
+                    if let msg = lastMessage {
+                        Text(msg.content)
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.8))
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .padding()
+            .contentShape(Rectangle())
+        }
     }
 }
