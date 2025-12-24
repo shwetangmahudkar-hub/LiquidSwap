@@ -1,31 +1,34 @@
-//
-//  ContentView.swift
-//  LiquidSwap
-//
-//  Created by Shwetang Mahudkar on 2025-12-23.
-//
-
-
 import SwiftUI
 
 struct ContentView: View {
     @StateObject var authVM = AuthViewModel()
+    @State private var showSplash = true // Control splash state
     
     var body: some View {
-        Group {
-            if authVM.isAuthenticated {
-                // RESTORED: Go to the Main Tab Bar (Feed + Chat + Profile)
-                MainTabView()
-                    .environmentObject(authVM) // Pass Auth down so Profile can Sign Out
-            } else {
-                // If not logged in, show Auth
-                AuthView()
-                    .environmentObject(authVM)
+        ZStack {
+            // 1. Main App Content (Hidden until splash is done)
+            if !showSplash {
+                Group {
+                    if authVM.isAuthenticated {
+                        MainTabView()
+                            .environmentObject(authVM)
+                    } else {
+                        AuthView()
+                            .environmentObject(authVM)
+                    }
+                }
+                // Fade in the app content
+                .transition(.opacity)
+            }
+            
+            // 2. Splash Screen Overlay
+            if showSplash {
+                SplashScreen(showSplash: $showSplash)
+                    .zIndex(1) // Ensure it sits on top
             }
         }
         .onAppear {
-            // Optional: Check if session is expired or valid
-            // authVM.checkSession() 
+            // Optional: You can trigger silent sign-in checks here
         }
     }
 }

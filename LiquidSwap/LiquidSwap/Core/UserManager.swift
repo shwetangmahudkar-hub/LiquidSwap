@@ -6,44 +6,55 @@ import Supabase
 class UserManager: ObservableObject {
     static let shared = UserManager()
     
+    // User Data
     @Published var currentUser: UserProfile?
     @Published var userItems: [TradeItem] = []
     @Published var isLoading = false
     
+    // Cloud References
     private let db = DatabaseService.shared
     private let auth = SupabaseConfig.client.auth
     
+    // Logic: Enforce 5-item limit
+    var canAddItem: Bool {
+        return userItems.count < 5
+    }
+    
     private init() {
-        Task {
-            await loadUserData()
-        }
+        Task { await loadUserData() }
     }
     
     // MARK: - Data Loading
     @MainActor
     func loadUserData() async {
-        // 1. Check Auth Session
-        guard let session = try? await auth.session else {
-            print("⚠️ UserManager: No active session found.")
-            return
-        }
-        
+        guard let session = try? await auth.session else { return }
         let userId = session.user.id
         self.isLoading = true
         
         do {
-            // 2. Fetch Items
+            // 1. Fetch User's Items from Cloud
             let items = try await db.fetchUserItems(userId: userId)
             self.userItems = items
             
-            // 3. Set Profile
-            self.currentUser = UserProfile(
+            // 2. Fetch/Setup Profile
+            // Preserve existing ISO categories if we already loaded them, or load from disk
+            let savedISO = UserDefaults.standard.stringArray(forKey: "userISO_\(userId)") ?? []
+            let defaultName = session.user.email?.components(separatedBy: "@").first ?? "Trader"
+            
+            // If we already have a profile in memory, keep its text edits (Bio/Location), otherwise create new
+            var profile = self.currentUser ?? UserProfile(
                 id: userId,
-                username: session.user.email?.components(separatedBy: "@").first ?? "Trader",
+                username: defaultName,
                 bio: "Ready to trade!",
                 location: "Unknown",
-                avatarUrl: nil
+                avatarUrl: nil,
+                isoCategories: savedISO
             )
+            
+            // Ensure ISO is synced
+            profile.isoCategories = savedISO
+            self.currentUser = profile
+            
             print("✅ User Data Loaded: \(self.userItems.count) items.")
             
         } catch {
@@ -53,72 +64,90 @@ class UserManager: ObservableObject {
         self.isLoading = false
     }
     
-    // MARK: - Actions
+    // MARK: - Inventory Actions
     
-    // UPDATED: Now 'async throws' so the UI can catch errors
     @MainActor
     func addItem(title: String, description: String, image: UIImage) async throws {
-        self.isLoading = true
-        
-        // Ensure we have a user
-        guard let userId = currentUser?.id else {
-            self.isLoading = false
-            throw NSError(domain: "App", code: 401, userInfo: [NSLocalizedDescriptionKey: "You must be logged in to post items."])
+        guard canAddItem else {
+            throw NSError(domain: "App", code: 400, userInfo: [NSLocalizedDescriptionKey: "You have reached the 5-item limit. Delete an item to add a new one."])
         }
         
-        do {
-            // 1. Upload Image
-            let imageUrl = try await db.uploadImage(image)
-            
-            // 2. Create Object
-            let newItem = TradeItem(
-                ownerId: userId,
-                title: title,
-                description: description,
-                condition: "Good",
-                category: "General",
-                imageUrl: imageUrl
-            )
-            
-            // 3. Save to DB
-            try await db.createItem(item: newItem)
-            
-            // 4. Refresh Data
-            await loadUserData()
-            
-            self.isLoading = false
-            print("✅ Item Saved Successfully!")
-            
-        } catch {
-            self.isLoading = false
-            print("❌ Failed to add item: \(error)")
-            throw error // Pass error back to UI
+        self.isLoading = true
+        guard let userId = currentUser?.id else { self.isLoading = false; return }
+        
+        let imageUrl = try await db.uploadImage(image)
+        let newItem = TradeItem(
+            ownerId: userId,
+            title: title,
+            description: description,
+            condition: "Good",
+            category: "General",
+            imageUrl: imageUrl
+        )
+        
+        try await db.createItem(item: newItem)
+        await loadUserData()
+        self.isLoading = false
+    }
+    
+    @MainActor
+    func updateItem(_ item: TradeItem) async throws {
+        self.isLoading = true
+        try await db.updateItem(item)
+        if let index = userItems.firstIndex(where: { $0.id == item.id }) {
+            userItems[index] = item
+        }
+        self.isLoading = false
+    }
+    
+    @MainActor
+    func deleteItem(item: TradeItem) async throws {
+        self.isLoading = true
+        try await db.deleteItem(id: item.id)
+        await loadUserData()
+        self.isLoading = false
+    }
+    
+    // MARK: - Profile Actions
+    
+    func updateProfile(username: String, bio: String, location: String, isoCategories: [String]) {
+        // Update local state
+        currentUser?.username = username
+        currentUser?.bio = bio
+        currentUser?.location = location
+        currentUser?.isoCategories = isoCategories
+        
+        // Persist ISO preferences
+        if let uid = currentUser?.id {
+            UserDefaults.standard.set(isoCategories, forKey: "userISO_\(uid)")
         }
     }
     
-    func deleteItem(at offsets: IndexSet) {
-        let itemsToDelete = offsets.map { userItems[$0] }
-        userItems.remove(atOffsets: offsets)
-        
+    func updateAvatar(image: UIImage) {
         Task {
-            for item in itemsToDelete {
-                try? await db.deleteItem(id: item.id)
+            if let url = try? await db.uploadImage(image) {
+                DispatchQueue.main.async {
+                    self.currentUser?.avatarUrl = url
+                }
             }
         }
     }
     
-    // Stubs for compatibility
-    func updateProfile(username: String, bio: String, location: String) {}
-    func updateAvatar(image: UIImage) {}
-    func completeOnboarding(username: String, bio: String, image: UIImage?) {}
-    func updateItem(item: TradeItem) {}
+    // Compatibility
+    func completeOnboarding(username: String, bio: String, image: UIImage?) {
+        updateProfile(username: username, bio: bio, location: currentUser?.location ?? "Unknown", isoCategories: [])
+        if let img = image {
+            updateAvatar(image: img)
+        }
+    }
 }
 
-// Ensure Model is available here
+// Updated User Profile Model
 struct UserProfile: Codable {
     var id: UUID
     var username: String
     var bio: String
     var location: String
     var avatarUrl: String?
+    var isoCategories: [String] = [] // New Field
 }

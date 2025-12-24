@@ -4,6 +4,9 @@ struct MatchView: View {
     var item: TradeItem
     @Binding var showMatch: Bool
     
+    // 1. Get the ChatManager
+    @ObservedObject var chatManager = ChatManager.shared
+    
     var body: some View {
         ZStack {
             // Dark Overlay
@@ -18,7 +21,8 @@ struct MatchView: View {
                     )
                     .shadow(color: .cyan.opacity(0.5), radius: 10)
                 
-                // The Item Image - FIXED: Uses imageUrl
+                // The Item Image
+                // FIXED: Uses 'imageUrl' for Cloud images
                 AsyncImageView(filename: item.imageUrl)
                     .frame(width: 250, height: 250)
                     .cornerRadius(20)
@@ -38,8 +42,7 @@ struct MatchView: View {
                 // Action Buttons
                 VStack(spacing: 16) {
                     Button(action: {
-                        // In a real app, go to chat
-                        showMatch = false
+                        startChat()
                     }) {
                         Text("Send Message")
                             .font(.headline)
@@ -58,6 +61,23 @@ struct MatchView: View {
                 }
                 .padding(.horizontal, 40)
             }
+        }
+    }
+    
+    // MARK: - Logic
+    
+    func startChat() {
+        Task {
+            // 1. Send an initial greeting
+            let greeting = "Hi! I matched with your \(item.title)!"
+            
+            // 2. Send to the Item's Owner (Cloud)
+            await chatManager.sendMessage(greeting, to: item.ownerId)
+            
+            // 3. Close the Match Screen
+            showMatch = false
+            
+            // Note: The new chat will now appear in your 'Messages' tab!
         }
     }
 }

@@ -9,14 +9,16 @@ struct EditProfileView: View {
     @State private var username: String = ""
     @State private var bio: String = ""
     @State private var location: String = ""
+    @State private var isoCategories: [String] = [] // New State
     
     @State private var selectedItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
     
+    let allCategories = ["Electronics", "Fashion", "Home & Garden", "Sports", "Books", "Other"]
+    
     var body: some View {
         NavigationStack {
             Form {
-                // FIXED: Handle optional currentUser and use 'avatarUrl'
                 ProfileImageSection(
                     selectedItem: $selectedItem,
                     selectedImage: $selectedImage,
@@ -24,15 +26,33 @@ struct EditProfileView: View {
                 )
                 
                 ProfileDetailsSection(username: $username, bio: $bio, location: $location)
+                
+                // NEW: ISO Selection Section
+                Section(header: Text("In Search Of (ISO)")) {
+                    Text("Select the categories you are interested in trading for.")
+                        .font(.caption)
+                        .foregroundStyle(.gray)
+                    
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack {
+                            ForEach(allCategories, id: \.self) { cat in
+                                TogglePill(title: cat, isSelected: isoCategories.contains(cat)) {
+                                    toggleCategory(cat)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
             }
             .navigationTitle("Edit Profile")
             .navigationBarTitleDisplayMode(.inline)
             .onAppear {
-                // FIXED: Safely unwrap optional user data with default values
                 if let user = userManager.currentUser {
                     username = user.username
                     bio = user.bio
                     location = user.location
+                    isoCategories = user.isoCategories
                 }
             }
             .toolbar {
@@ -46,7 +66,6 @@ struct EditProfileView: View {
                     }
                 }
             }
-            // FIXED: iOS 17 syntax for onChange (attached correctly to NavigationStack)
             .onChange(of: selectedItem) { _, newItem in
                 Task {
                     if let data = try? await newItem?.loadTransferable(type: Data.self),
@@ -58,11 +77,22 @@ struct EditProfileView: View {
         }
     }
     
+    func toggleCategory(_ cat: String) {
+        if isoCategories.contains(cat) {
+            isoCategories.removeAll { $0 == cat }
+        } else {
+            isoCategories.append(cat)
+        }
+    }
+    
     func saveProfile() {
-        // 1. Update Text Data
-        userManager.updateProfile(username: username, bio: bio, location: location)
+        userManager.updateProfile(
+            username: username,
+            bio: bio,
+            location: location,
+            isoCategories: isoCategories
+        )
         
-        // 2. Update Image if changed
         if let newImage = selectedImage {
             userManager.updateAvatar(image: newImage)
         }
@@ -71,7 +101,25 @@ struct EditProfileView: View {
     }
 }
 
-// MARK: - SUBVIEWS
+// Helper Pill for Selection
+struct TogglePill: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption).bold()
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(isSelected ? Color.cyan : Color.gray.opacity(0.2))
+                .foregroundStyle(isSelected ? .white : .primary)
+                .cornerRadius(20)
+        }
+        .buttonStyle(.plain)
+    }
+}
 
 struct ProfileImageSection: View {
     @Binding var selectedItem: PhotosPickerItem?
@@ -85,40 +133,18 @@ struct ProfileImageSection: View {
                 PhotosPicker(selection: $selectedItem, matching: .images) {
                     ZStack {
                         if let image = selectedImage {
-                            // New selected image
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 120, height: 120)
-                                .clipShape(Circle())
+                            Image(uiImage: image).resizable().scaledToFill().frame(width: 120, height: 120).clipShape(Circle())
                         } else if let urlString = currentAvatar {
-                            // FIXED: Use AsyncImageView for the cloud URL
-                            AsyncImageView(filename: urlString)
-                                .clipShape(Circle())
-                                .frame(width: 120, height: 120)
-                                .overlay(Circle().stroke(Color.gray.opacity(0.3), lineWidth: 1))
+                            AsyncImageView(filename: urlString).clipShape(Circle()).frame(width: 120, height: 120)
                         } else {
-                            // Placeholder
-                            Image(systemName: "person.circle.fill")
-                                .resizable()
-                                .foregroundStyle(.gray)
-                                .frame(width: 120, height: 120)
+                            Image(systemName: "person.circle.fill").resizable().foregroundStyle(.gray).frame(width: 120, height: 120)
                         }
-                        
-                        // Edit Overlay
                         VStack {
                             Spacer()
-                            Text("Edit")
-                                .font(.caption)
-                                .bold()
-                                .foregroundStyle(.white)
-                                .padding(.vertical, 4)
-                                .frame(maxWidth: .infinity)
-                                .background(Color.black.opacity(0.6))
+                            Text("Edit").font(.caption).bold().foregroundStyle(.white).padding(.vertical, 4).frame(maxWidth: .infinity).background(Color.black.opacity(0.6))
                         }
                     }
-                    .frame(width: 120, height: 120)
-                    .clipShape(Circle())
+                    .frame(width: 120, height: 120).clipShape(Circle())
                 }
                 Spacer()
             }
@@ -134,17 +160,9 @@ struct ProfileDetailsSection: View {
     
     var body: some View {
         Section("Public Info") {
-            TextField("Username", text: $username)
-                .textInputAutocapitalization(.never)
-            
+            TextField("Username", text: $username).textInputAutocapitalization(.never)
             TextField("Location", text: $location)
-            
-            TextField("Bio", text: $bio, axis: .vertical)
-                .lineLimit(3...6)
+            TextField("Bio", text: $bio, axis: .vertical).lineLimit(3...6)
         }
     }
-}
-
-#Preview {
-    EditProfileView()
 }

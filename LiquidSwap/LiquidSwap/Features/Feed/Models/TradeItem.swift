@@ -8,10 +8,10 @@ struct TradeItem: Identifiable, Codable, Hashable {
     var description: String
     var condition: String
     var category: String
-    var imageUrl: String? // The Cloud URL
+    var imageUrl: String? // The Cloud URL (was imageFilename)
     var createdAt: Date
     
-    // We keep this for backward compatibility with local mock data if needed
+    // We keep this for backward compatibility with the Feed UI
     var distance: Double = 0.0
     
     enum CodingKeys: String, CodingKey {
@@ -38,17 +38,12 @@ struct TradeItem: Identifiable, Codable, Hashable {
         self.distance = distance
     }
     
-    // Helper to get a valid URL object
-    var imageURLObj: URL? {
-        guard let string = imageUrl else { return nil }
-        return URL(string: string)
-    }
-    
     // Mock Data Generator (Updated for Cloud Model)
     static func generateMockItems() -> [TradeItem] {
         return [
             TradeItem(title: "Vintage Camera", description: "Film camera.", condition: "Used", category: "Electronics", imageUrl: nil, distance: 2.5),
-            TradeItem(title: "Succulent", description: "Nice plant.", condition: "New", category: "Plants", imageUrl: nil, distance: 0.5)
+            TradeItem(title: "Succulent", description: "Nice plant.", condition: "New", category: "Home & Garden", imageUrl: nil, distance: 0.5),
+            TradeItem(title: "Fixie Bike", description: "Fast bike.", condition: "Fair", category: "Sports", imageUrl: nil, distance: 5.0)
         ]
     }
 }

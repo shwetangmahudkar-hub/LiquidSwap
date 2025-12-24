@@ -2,87 +2,151 @@ import SwiftUI
 
 struct ChatListView: View {
     @ObservedObject var chatManager = ChatManager.shared
-    @ObservedObject var userManager = UserManager.shared
     
     var body: some View {
         NavigationStack {
             ZStack {
                 LiquidBackground()
                 
-                if chatManager.conversations.isEmpty {
-                    VStack(spacing: 16) {
-                        Image(systemName: "bubble.left.and.bubble.right")
-                            .font(.system(size: 60))
-                            .foregroundStyle(.gray)
-                        Text("No messages yet")
-                            .foregroundStyle(.gray)
-                        Text("Match with someone to start chatting!")
-                            .font(.caption)
-                            .foregroundStyle(.gray.opacity(0.8))
-                    }
-                } else {
-                    ScrollView {
-                        VStack(spacing: 2) {
-                            // Loop through all conversation partners
-                            ForEach(Array(chatManager.conversations.keys), id: \.self) { partnerId in
-                                NavigationLink(destination: ChatRoomView(partnerId: partnerId)) {
-                                    ChatRow(partnerId: partnerId)
-                                }
-                                Divider().background(.white.opacity(0.1))
-                            }
-                        }
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(20)
-                        .padding()
-                    }
-                }
-            }
-            .navigationTitle("Messages")
-            .refreshable {
-                await chatManager.fetchAllMessages()
-            }
-            // ADD THIS BLOCK:
-            .task {
-                await chatManager.setup()
-            }
-        }
-    }
-    
-    struct ChatRow: View {
-        let partnerId: UUID
-        @ObservedObject var chatManager = ChatManager.shared
-        
-        var lastMessage: Message? {
-            chatManager.conversations[partnerId]?.last
-        }
-        
-        var body: some View {
-            HStack(spacing: 16) {
-                // Avatar Placeholder
-                Circle()
-                    .fill(Color.cyan.opacity(0.3))
-                    .frame(width: 60, height: 60)
-                    .overlay(Image(systemName: "person.fill").foregroundStyle(.white))
-                
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(spacing: 0) {
+                    // --- HEADER ---
                     HStack {
-                        // In a real app, we would fetch the partner's Name here
-                        Text("User \(partnerId.uuidString.prefix(4))")
-                            .font(.headline)
+                        Text("Messages")
+                            .font(.largeTitle).bold()
                             .foregroundStyle(.white)
                         Spacer()
                     }
+                    .padding()
+                    .background(.ultraThinMaterial)
                     
-                    if let msg = lastMessage {
-                        Text(msg.content)
-                            .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.8))
-                            .lineLimit(1)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            
+                            // 1. NEW MATCHES ROW (Tinder Style)
+                            // (Using the same conversation data for now, but styled differently)
+                            if !chatManager.conversations.isEmpty {
+                                Text("New Matches")
+                                    .font(.headline)
+                                    .foregroundStyle(.cyan)
+                                    .padding(.horizontal)
+                                
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 16) {
+                                        ForEach(Array(chatManager.conversations.keys), id: \.self) { partnerId in
+                                            NavigationLink(destination: ChatRoomView(partnerId: partnerId)) {
+                                                VStack {
+                                                    // Large Avatar
+                                                    Circle()
+                                                        .fill(LinearGradient(colors: [.purple, .blue], startPoint: .top, endPoint: .bottom))
+                                                        .frame(width: 70, height: 70)
+                                                        .overlay(
+                                                            Circle().stroke(Color.white, lineWidth: 2)
+                                                        )
+                                                        .overlay(Text(partnerId.uuidString.prefix(1)).font(.title2).bold().foregroundStyle(.white))
+                                                        .shadow(radius: 5)
+                                                    
+                                                    Text("User")
+                                                        .font(.caption).bold()
+                                                        .foregroundStyle(.white)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal)
+                                }
+                            }
+                            
+                            // 2. MESSAGES LIST
+                            Text("Conversations")
+                                .font(.headline)
+                                .foregroundStyle(.cyan)
+                                .padding(.horizontal)
+                            
+                            if chatManager.conversations.isEmpty {
+                                EmptyChatState()
+                            } else {
+                                VStack(spacing: 0) {
+                                    ForEach(Array(chatManager.conversations.keys), id: \.self) { partnerId in
+                                        NavigationLink(destination: ChatRoomView(partnerId: partnerId)) {
+                                            GlassChatRow(partnerId: partnerId)
+                                        }
+                                        Divider().background(Color.white.opacity(0.1))
+                                    }
+                                }
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(20)
+                                .padding(.horizontal)
+                            }
+                        }
+                        .padding(.top, 10)
                     }
                 }
             }
-            .padding()
-            .contentShape(Rectangle())
+            .task { await chatManager.setup() }
+            .refreshable { await chatManager.fetchAllMessages() }
         }
+    }
+}
+
+// --- SUBVIEWS ---
+
+struct GlassChatRow: View {
+    let partnerId: UUID
+    @ObservedObject var chatManager = ChatManager.shared
+    
+    var lastMessage: Message? {
+        chatManager.conversations[partnerId]?.last
+    }
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // Avatar
+            Circle()
+                .fill(Color.gray.opacity(0.3))
+                .frame(width: 55, height: 55)
+                .overlay(Text(partnerId.uuidString.prefix(1)).bold().foregroundStyle(.white))
+            
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Trader \(partnerId.uuidString.prefix(4))")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Spacer()
+                    if let date = lastMessage?.createdAt {
+                        Text(date.formatted(.dateTime.hour().minute()))
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.5))
+                    }
+                }
+                
+                if let msg = lastMessage {
+                    Text(msg.content)
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding()
+        .contentShape(Rectangle()) // Makes the whole row tappable
+    }
+}
+
+struct EmptyChatState: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "bubble.left.and.bubble.right.fill")
+                .font(.system(size: 50))
+                .foregroundStyle(.white.opacity(0.3))
+            Text("No messages yet")
+                .foregroundStyle(.white.opacity(0.7))
+            Text("Start swiping to find trades!")
+                .font(.caption)
+                .foregroundStyle(.gray)
+            Spacer()
+        }
+        .frame(height: 200)
+        .frame(maxWidth: .infinity)
     }
 }

@@ -12,10 +12,17 @@ struct AddItemView: View {
     @State private var description = ""
     @State private var category = "Electronics"
     @State private var condition = "Good"
+    
+    // Image Handling
     @State private var selectedItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
+    @State private var showCamera = false // Controls Camera sheet
     
-    // NEW: Error & Loading State
+    // AI State
+    @State private var isAnalyzing = false
+    @State private var showSafetyAlert = false
+    
+    // Error & Loading State
     @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var showError = false
@@ -26,7 +33,64 @@ struct AddItemView: View {
     var body: some View {
         NavigationStack {
             Form {
-                ImageSelectionSection(selectedItem: $selectedItem, selectedImage: $selectedImage)
+                // Image Section
+                Section {
+                    HStack {
+                        Spacer()
+                        // Menu allows choosing between Camera and Library
+                        Menu {
+                            Button {
+                                showCamera = true
+                            } label: {
+                                Label("Take Photo", systemImage: "camera")
+                            }
+                            
+                            PhotosPicker(selection: $selectedItem, matching: .images) {
+                                Label("Choose from Library", systemImage: "photo.on.rectangle")
+                            }
+                        } label: {
+                            ZStack {
+                                if let image = selectedImage {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 200, height: 200)
+                                        .cornerRadius(12)
+                                        .clipped()
+                                        .opacity(isAnalyzing ? 0.5 : 1.0)
+                                    
+                                    if isAnalyzing {
+                                        VStack(spacing: 8) {
+                                            ProgressView()
+                                                .tint(.white)
+                                            Text("AI Analyzing...")
+                                                .font(.caption)
+                                                .bold()
+                                                .foregroundStyle(.white)
+                                                .shadow(radius: 2)
+                                        }
+                                    }
+                                } else {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .fill(Color.gray.opacity(0.1))
+                                            .frame(width: 200, height: 200)
+                                        VStack(spacing: 8) {
+                                            Image(systemName: "camera.fill")
+                                                .font(.largeTitle)
+                                                .foregroundStyle(.cyan)
+                                            Text("Tap to Add Photo")
+                                                .font(.caption)
+                                                .foregroundStyle(.gray)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Spacer()
+                    }
+                }
+                .listRowBackground(Color.clear)
                 
                 ItemDetailsSection(
                     title: $title,
@@ -37,38 +101,34 @@ struct AddItemView: View {
                     conditions: conditions
                 )
                 
-                // Show error in form if exists
                 if let error = errorMessage {
                     Section {
-                        Text(error)
-                            .foregroundStyle(.red)
-                            .font(.caption)
+                        Text(error).foregroundStyle(.red).font(.caption)
                     }
                 }
             }
             .navigationTitle("Add New Item")
             .navigationBarTitleDisplayMode(.inline)
-            .disabled(isSaving) // Disable interaction while saving
+            .disabled(isSaving || isAnalyzing)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
-                        Task {
-                            await saveItem()
-                        }
+                        Task { await saveItem() }
                     } label: {
-                        if isSaving {
-                            ProgressView()
-                        } else {
-                            Text("List Item")
-                        }
+                        if isSaving { ProgressView() } else { Text("List Item") }
                     }
                     .disabled(title.isEmpty || selectedImage == nil || isSaving)
                 }
             }
-            // Handle Photo Selection
+            // 1. Handle Camera Presentation
+            .fullScreenCover(isPresented: $showCamera) {
+                CameraPicker(selectedImage: $selectedImage)
+                    .ignoresSafeArea()
+            }
+            // 2. Handle Library Selection
             .onChange(of: selectedItem) { _, newItem in
                 Task {
                     if let data = try? await newItem?.loadTransferable(type: Data.self),
@@ -77,7 +137,17 @@ struct AddItemView: View {
                     }
                 }
             }
-            // Error Alert
+            // 3. Trigger AI when Image Changes (Source doesn't matter)
+            .onChange(of: selectedImage) { _, newImage in
+                if let img = newImage {
+                    Task { await analyzeImage(img) }
+                }
+            }
+            .alert("Unsafe Content", isPresented: $showSafetyAlert) {
+                Button("OK", role: .cancel) { selectedImage = nil; selectedItem = nil }
+            } message: {
+                Text("This image contains content that is not allowed on LiquidSwap.")
+            }
             .alert("Failed to Save", isPresented: $showError) {
                 Button("OK", role: .cancel) { }
             } message: {
@@ -86,55 +156,58 @@ struct AddItemView: View {
         }
     }
     
+    // MARK: - AI Logic
+    func analyzeImage(_ image: UIImage) async {
+        isAnalyzing = true
+        do {
+            let labels = try await ImageAnalyzer.analyze(image: image)
+            print("🤖 AI saw: \(labels)")
+            
+            if !ImageAnalyzer.isSafeContent(labels: labels) {
+                showSafetyAlert = true
+                isAnalyzing = false
+                return
+            }
+            
+            if title.isEmpty, let firstLabel = labels.first {
+                withAnimation {
+                    title = firstLabel.capitalized
+                }
+            }
+            
+            let suggestedCategory = ImageAnalyzer.suggestCategory(from: labels)
+            withAnimation {
+                category = suggestedCategory
+            }
+            
+        } catch {
+            print("AI Analysis failed: \(error)")
+        }
+        isAnalyzing = false
+    }
+    
+    // MARK: - Save Logic
     func saveItem() async {
         guard let image = selectedImage else { return }
-        
         isSaving = true
         errorMessage = nil
         
         do {
-            // Wait for the upload to finish
             try await userManager.addItem(
                 title: title,
                 description: description.isEmpty ? "No description provided." : description,
                 image: image
             )
-            // Only dismiss if successful
             dismiss()
         } catch {
-            // Show error
             errorMessage = error.localizedDescription
             showError = true
         }
-        
         isSaving = false
     }
 }
 
-// MARK: - Subviews
-struct ImageSelectionSection: View {
-    @Binding var selectedItem: PhotosPickerItem?
-    @Binding var selectedImage: UIImage?
-    var body: some View {
-        Section {
-            HStack {
-                Spacer()
-                PhotosPicker(selection: $selectedItem, matching: .images) {
-                    if let image = selectedImage {
-                        Image(uiImage: image).resizable().scaledToFill().frame(width: 200, height: 200).cornerRadius(12).clipped()
-                    } else {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 12).fill(Color.gray.opacity(0.1)).frame(width: 200, height: 200)
-                            VStack { Image(systemName: "camera.fill"); Text("Tap to upload") }
-                        }
-                    }
-                }
-                Spacer()
-            }
-        }
-    }
-}
-
+// Helper Subview
 struct ItemDetailsSection: View {
     @Binding var title: String
     @Binding var description: String
@@ -150,8 +223,4 @@ struct ItemDetailsSection: View {
             Picker("Condition", selection: $condition) { ForEach(conditions, id: \.self) { Text($0).tag($0) } }
         }
     }
-}
-
-#Preview {
-    AddItemView(isPresented: .constant(true))
 }

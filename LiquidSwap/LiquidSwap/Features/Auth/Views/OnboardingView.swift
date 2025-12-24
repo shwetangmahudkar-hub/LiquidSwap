@@ -69,10 +69,10 @@ struct OnboardingView: View {
                 
                 // Finish Button
                 Button(action: {
-                    // FIXED: Updated call to match new UserManager signature
+                    // Call the compatibility method in UserManager
                     userManager.completeOnboarding(
                         username: name.isEmpty ? "Trader" : name,
-                        bio: "Ready to trade!", // Default bio since this view doesn't ask for one
+                        bio: "Ready to trade!",
                         image: selectedImage
                     )
                     isOnboarding = false
@@ -131,8 +131,4 @@ struct ImagePicker: UIViewControllerRepresentable {
             parent.dismiss()
         }
     }
-}
-
-#Preview {
-    OnboardingView()
 }
