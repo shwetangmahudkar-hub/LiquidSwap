@@ -46,14 +46,12 @@ class UserManager: ObservableObject {
     }
     
     private init() {
-        // FIX: Call directly (no Task/await needed here now)
         setupAuthListener()
     }
     
     // MARK: - Auto-Sync Logic
     
     private func setupAuthListener() {
-        // FIX: Task is now internal to this function
         Task {
             for await state in client.auth.authStateChanges {
                 if let _ = state.session {
@@ -125,8 +123,9 @@ class UserManager: ObservableObject {
     
     // MARK: - Inventory Actions
     
+    // 🛡️ SAFETY UPDATE: Added customLat/customLon parameters
     @MainActor
-    func addItem(title: String, description: String, image: UIImage) async throws {
+    func addItem(title: String, description: String, image: UIImage, customLat: Double? = nil, customLon: Double? = nil) async throws {
         guard canAddItem else {
             throw NSError(domain: "App", code: 400, userInfo: [NSLocalizedDescriptionKey: "Limit Reached"])
         }
@@ -136,7 +135,11 @@ class UserManager: ObservableObject {
         
         guard let userId = currentUser?.id else { return }
         
+        // Use custom coords (fuzzed) if provided, otherwise fall back to raw location
         let location = LocationManager.shared.userLocation
+        let finalLat = customLat ?? location?.coordinate.latitude
+        let finalLon = customLon ?? location?.coordinate.longitude
+        
         let imageUrl = try await db.uploadImage(image)
         let newItem = TradeItem(
             ownerId: userId,
@@ -145,8 +148,8 @@ class UserManager: ObservableObject {
             condition: "Good",
             category: "General",
             imageUrl: imageUrl,
-            latitude: location?.coordinate.latitude,
-            longitude: location?.coordinate.longitude
+            latitude: finalLat,
+            longitude: finalLon
         )
         
         try await db.createItem(item: newItem)

@@ -50,26 +50,47 @@ class FeedManager: ObservableObject {
             
             // 3. Filter out items I've already liked
             let likedIDs = Set(likedItems.map { $0.id })
+            let visibleItems = fetchedItems.filter { !likedIDs.contains($0.id) }
             
-            // 4. Calculate Distance & Sort
-            self.allItems = fetchedItems
-                .filter { !likedIDs.contains($0.id) }
-                .map { item in
-                    var modifiedItem = item
-                    // If item has coords, calculate real distance
-                    if let lat = item.latitude, let long = item.longitude {
-                        modifiedItem.distance = locationManager.distanceFromUser(latitude: lat, longitude: long)
+            // 4. HYDRATION: Calculate Distance & Fetch Ratings (Parallel)
+            var enrichedItems: [TradeItem] = []
+            
+            await withTaskGroup(of: TradeItem.self) { group in
+                for item in visibleItems {
+                    group.addTask {
+                        var modifiedItem = item
+                        
+                        // A. Calculate Distance
+                        if let lat = item.latitude, let long = item.longitude {
+                            modifiedItem.distance = self.locationManager.distanceFromUser(latitude: lat, longitude: long)
+                        }
+                        
+                        // B. Fetch Owner Rating (Async)
+                        // We use try? to prevent one failed rating from breaking the whole feed
+                        async let rating = self.db.fetchUserRating(userId: item.ownerId)
+                        async let count = self.db.fetchReviewCount(userId: item.ownerId)
+                        
+                        let (r, c) = await (try? rating, try? count)
+                        modifiedItem.ownerRating = r ?? 0.0
+                        modifiedItem.ownerReviewCount = c ?? 0
+                        
+                        return modifiedItem
                     }
-                    return modifiedItem
                 }
-                // Sort by Nearest First
-                .sorted { $0.distance < $1.distance }
+                
+                for await item in group {
+                    enrichedItems.append(item)
+                }
+            }
             
-            // 5. SKIP ISO FILTERING - Show everything
+            // 5. Sort by Nearest First
+            self.allItems = enrichedItems.sorted { $0.distance < $1.distance }
+            
+            // 6. SKIP ISO FILTERING - Show everything
             self.items = self.allItems
             
-            self.debugInfo = "Cloud: \(fetchedItems.count) | Final: \(self.items.count) (Location Based)"
-            print("✅ Feed Loaded: \(self.items.count) items sorted by distance.")
+            self.debugInfo = "Cloud: \(fetchedItems.count) | Final: \(self.items.count) (Enriched)"
+            print("✅ Feed Loaded: \(self.items.count) items with ratings.")
             
         } catch {
             self.debugInfo = "Error: \(error.localizedDescription)"

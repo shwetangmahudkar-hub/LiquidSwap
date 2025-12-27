@@ -1,6 +1,6 @@
 import SwiftUI
 import UserNotifications
-import Combine // 👈 Critical import for ObservableObject
+import Combine
 
 class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationManager()
@@ -36,8 +36,10 @@ class NotificationManager: NSObject, ObservableObject, UNUserNotificationCenterD
         UNUserNotificationCenter.current().add(request)
     }
     
-    // 3. Allow notification to show even when app is in FOREGROUND
+    // 3. Handle Foreground Notifications
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound])
+        // ✨ FIX: Return empty array [] to suppress banners while app is open.
+        // The app's UI (ChatRoomView) already updates automatically via Realtime.
+        completionHandler([])
     }
 }

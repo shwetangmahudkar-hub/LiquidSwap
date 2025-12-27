@@ -251,6 +251,20 @@ struct TinderGlassCard: View {
                     Spacer()
                     Badge(text: item.category, color: .purple)
                 }
+                
+                // ✨ NEW: Star Rating Display
+                HStack(spacing: 4) {
+                    ForEach(1...5, id: \.self) { index in
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                            .foregroundStyle(index <= Int(item.ownerRating ?? 0) ? .yellow : .gray.opacity(0.5))
+                    }
+                    Text("(\(item.ownerReviewCount ?? 0))")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+                .padding(.bottom, 4)
+                
                 Text(item.condition).font(.subheadline).bold().foregroundStyle(.cyan).padding(.bottom, 2)
                 Text(item.description).font(.subheadline).foregroundStyle(.white.opacity(0.9)).lineLimit(2)
                 

@@ -1,3 +1,4 @@
+
 import SwiftUI
 import Combine
 import Supabase
@@ -57,7 +58,7 @@ class ChatManager: ObservableObject {
     // MARK: - Actions
     
     @MainActor
-    func sendMessage(_ text: String, to receiverId: UUID, tradeId: UUID, imageUrl: String? = nil) async {
+    func sendMessage(_ text: String, to receiverId: UUID, tradeId: UUID? = nil, imageUrl: String? = nil) async {
         guard let myId = currentUserId else { return }
         
         let newMessage = Message(
@@ -78,7 +79,6 @@ class ChatManager: ObservableObject {
             print("✅ Message sent to DB")
         } catch {
             print("❌ Failed to send message: \(error)")
-            // Optional: Add "retry" logic or remove from UI here
         }
     }
     
@@ -132,40 +132,56 @@ class ChatManager: ObservableObject {
     }
     
     func subscribeToRealtime() async {
-            if let existingChannel = channel { await existingChannel.unsubscribe() }
-            
-            let newChannel = client.channel("public:messages")
-            self.channel = newChannel
-            
-            // Listen for INSERT events (New Messages)
-            let changeStream = newChannel.postgresChange(
-                AnyAction.self,
-                schema: "public",
-                table: "messages"
-            )
-            
-            do {
-                try await newChannel.subscribeWithError()
-                await MainActor.run { self.isConnected = true }
-                print("✅ Realtime Connected!")
-            } catch {
-                print("⚠️ Realtime connection failed: \(error). Retrying in 5s...")
-                try? await Task.sleep(nanoseconds: 5 * 1_000_000_000)
-                await subscribeToRealtime()
-                return
-            }
-            
-            Task {
-                for await _ in changeStream {
-                    // 1. Refresh Data
-                    if let id = await MainActor.run(body: { return self.currentUserId }) {
-                        await fetchAllMessages(userId: id)
+        if let existingChannel = channel { await existingChannel.unsubscribe() }
+        
+        let newChannel = client.channel("public:messages")
+        self.channel = newChannel
+        
+        // Listen for INSERT events (New Messages)
+        let changeStream = newChannel.postgresChange(
+            AnyAction.self,
+            schema: "public",
+            table: "messages"
+        )
+        
+        do {
+            try await newChannel.subscribeWithError()
+            await MainActor.run { self.isConnected = true }
+            print("✅ Realtime Connected!")
+        } catch {
+            print("⚠️ Realtime connection failed: \(error). Retrying in 5s...")
+            try? await Task.sleep(nanoseconds: 5 * 1_000_000_000)
+            await subscribeToRealtime()
+            return
+        }
+        
+        Task {
+            // FIX: We now capture the 'action' to inspect the payload
+            for await action in changeStream {
+                
+                // 1. Refresh Data
+                if let id = await MainActor.run(body: { return self.currentUserId }) {
+                    await fetchAllMessages(userId: id)
+                    
+                    // 2. ✨ SMART NOTIFICATION TRIGGER ✨
+                    await MainActor.run {
+                        // Attempt to extract sender_id from the action payload
+                        var isFromMe = false
                         
-                        // 2. ✨ TRIGGER NOTIFICATION ✨
-                        await MainActor.run {
-                            // Logic: Only notify if it's NOT a message I just sent
-                            // (We assume the last message in the fetched list is the new one)
-                            // A simple generic notification works for now:
+                        switch action {
+                        case .insert(let record):
+                            // Check if the 'sender_id' in the payload matches our current ID
+                            if let senderStr = record.record["sender_id"]?.stringValue,
+                               let senderUUID = UUID(uuidString: senderStr),
+                               senderUUID == id {
+                                isFromMe = true
+                            }
+                        default:
+                            break
+                        }
+                        
+                        // Only notify if the message is NOT from me
+                        if !isFromMe {
                             NotificationManager.shared.sendLocalNotification(
                                 title: "New Message",
                                 body: "You received a new message on LiquidSwap!"
@@ -173,9 +189,10 @@ class ChatManager: ObservableObject {
                         }
                     }
                 }
-                await MainActor.run { self.isConnected = false }
             }
+            await MainActor.run { self.isConnected = false }
         }
+    }
     
     private func appendMessage(_ message: Message) {
         guard let tradeId = message.tradeId else { return }
@@ -183,3 +200,4 @@ class ChatManager: ObservableObject {
         conversations[tradeId]?.append(message)
     }
 }
+

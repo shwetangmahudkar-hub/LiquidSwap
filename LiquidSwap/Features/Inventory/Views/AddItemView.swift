@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import CoreLocation // Needed for location types
 
 struct AddItemView: View {
     @Environment(\.dismiss) var dismiss
@@ -185,11 +186,36 @@ struct AddItemView: View {
         isSaving = true
         
         do {
+            // 🛡️ SAFETY FIX: Location Obfuscation
+            // We fetch the exact location but apply a random offset before saving.
+            // 0.004 degrees is roughly 400-500 meters.
+            let exactLocation = LocationManager.shared.userLocation
+            let fuzzedLatitude = (exactLocation?.coordinate.latitude ?? 0.0) + Double.random(in: -0.004...0.004)
+            let fuzzedLongitude = (exactLocation?.coordinate.longitude ?? 0.0) + Double.random(in: -0.004...0.004)
+            
+            // Note: We are creating a TradeItem manually here to pass the fuzzed coords,
+            // but UserManager.addItem manages the DB call. We need to update UserManager
+            // or modify the call to accept coords.
+            //
+            // EASIEST PATH: We will overload the UserManager.addItem to accept coords,
+            // or assume UserManager uses the *current* location.
+            // Since UserManager.addItem pulls location internally, we should pass these fuzzed values explicitly.
+            
+            // Let's call the DB directly or update UserManager?
+            // To respect "don't lose code", we'll check UserManager logic.
+            // UserManager pulls location internally. We should update UserManager to accept optional coords.
+            // However, to keep this file self-contained for the "Build", let's update how we call it.
+            
+            // UPDATE: I will provide the UserManager update needed for this below,
+            // but for this file, we assume a new signature:
             try await userManager.addItem(
                 title: title,
                 description: description.isEmpty ? "No description provided." : description,
-                image: image
+                image: image,
+                customLat: fuzzedLatitude,
+                customLon: fuzzedLongitude
             )
+            
             dismiss()
         } catch {
             print("🟥 FAILED TO SAVE ITEM: \(error.localizedDescription)")
