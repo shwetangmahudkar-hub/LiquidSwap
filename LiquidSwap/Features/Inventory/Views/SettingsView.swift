@@ -1,15 +1,14 @@
 import SwiftUI
 import Supabase
 
-// RENAMED STRUCT: ProfileSettingsView
 struct ProfileSettingsView: View {
-    // 1. Access the Auth Logic
     @EnvironmentObject var authVM: AuthViewModel
-    
-    // 2. The Binding variable (The connector)
     @Binding var showSettings: Bool
     
     @State private var showResetAlert = false
+    
+    // ✅ FIXED: Missing state variable added
+    @State private var showRatingSheet = false
     
     var body: some View {
         NavigationStack {
@@ -29,7 +28,7 @@ struct ProfileSettingsView: View {
                     Button(action: {
                         Task {
                             await authVM.signOut()
-                            showSettings = false // Close settings to show login
+                            showSettings = false
                         }
                     }) {
                         HStack {
@@ -42,7 +41,15 @@ struct ProfileSettingsView: View {
                     }
                 }
                 
-                // --- SECTION 2: CACHE CONTROLS ---
+                // --- SECTION 2: TEST TOOLS ---
+                Section("Developer Tools") {
+                    // This button lets you test the rating UI
+                    Button("Test Rating System (Rate Myself)") {
+                        showRatingSheet = true
+                    }
+                }
+                
+                // --- SECTION 3: STORAGE ---
                 Section("Storage & Debug") {
                     Button(role: .destructive) {
                         showResetAlert = true
@@ -82,11 +89,14 @@ struct ProfileSettingsView: View {
             } message: {
                 Text("This will delete all local temporary files and images. Your cloud data (items, messages) will remain safe.")
             }
+            // ✅ FIXED: Sheet modifier for rating
+            .sheet(isPresented: $showRatingSheet) {
+                if let myId = UserManager.shared.currentUser?.id {
+                    RateUserView(targetUserId: myId, targetUsername: "Myself")
+                } else {
+                    Text("Please log in first.")
+                }
+            }
         }
     }
-}
-
-#Preview {
-    ProfileSettingsView(showSettings: .constant(true))
-        .environmentObject(AuthViewModel())
 }

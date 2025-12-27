@@ -1,11 +1,3 @@
-//
-//  CameraPicker.swift
-//  LiquidSwap
-//
-//  Created by Shwetang Mahudkar on 2025-12-24.
-//
-
-
 import SwiftUI
 import UIKit
 
@@ -17,7 +9,10 @@ struct CameraPicker: UIViewControllerRepresentable {
         let picker = UIImagePickerController()
         picker.sourceType = .camera
         picker.delegate = context.coordinator
-        picker.allowsEditing = true // Allows cropping/squaring after taking photo
+        
+        // 🛠️ FIX: Disable editing = Full Size Photo (No Square Crop)
+        picker.allowsEditing = false
+        
         return picker
     }
     
@@ -35,10 +30,8 @@ struct CameraPicker: UIViewControllerRepresentable {
         }
         
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
-            // Try to get the edited image first (if allowsEditing is true), otherwise original
-            if let image = info[.editedImage] as? UIImage {
-                parent.selectedImage = image
-            } else if let image = info[.originalImage] as? UIImage {
+            // 🛠️ FIX: Use .originalImage since editing is off
+            if let image = info[.originalImage] as? UIImage {
                 parent.selectedImage = image
             }
             parent.dismiss()

@@ -16,7 +16,11 @@ struct AddItemView: View {
     // Image Handling
     @State private var selectedItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
-    @State private var showCamera = false // Controls Camera sheet
+    
+    // 🛠️ FIX: Separate triggers for Camera and Gallery
+    @State private var showCamera = false
+    @State private var showPhotoPicker = false
+    @State private var showSourceSelection = false // Triggers Action Sheet
     
     // AI State
     @State private var isAnalyzing = false
@@ -24,7 +28,6 @@ struct AddItemView: View {
     
     // Error & Loading State
     @State private var isSaving = false
-    // Removed local error state (moved to console)
     
     let categories = ["Electronics", "Fashion", "Home & Garden", "Sports", "Books", "Other"]
     let conditions = ["New", "Like New", "Good", "Fair", "Poor"]
@@ -36,18 +39,10 @@ struct AddItemView: View {
                 Section {
                     HStack {
                         Spacer()
-                        // Menu allows choosing between Camera and Library
-                        Menu {
-                            Button {
-                                showCamera = true
-                            } label: {
-                                Label("Take Photo", systemImage: "camera")
-                            }
-                            
-                            PhotosPicker(selection: $selectedItem, matching: .images) {
-                                Label("Choose from Library", systemImage: "photo.on.rectangle")
-                            }
-                        } label: {
+                        // 🛠️ FIX: Button triggers Action Sheet (Rock Solid)
+                        Button(action: {
+                            showSourceSelection = true
+                        }) {
                             ZStack {
                                 if let image = selectedImage {
                                     Image(uiImage: image)
@@ -86,6 +81,7 @@ struct AddItemView: View {
                                 }
                             }
                         }
+                        .buttonStyle(.plain)
                         Spacer()
                     }
                 }
@@ -116,12 +112,21 @@ struct AddItemView: View {
                     .disabled(title.isEmpty || selectedImage == nil || isSaving)
                 }
             }
-            // 1. Handle Camera Presentation
+            // 1. Source Selection Action Sheet
+            .confirmationDialog("Choose Image Source", isPresented: $showSourceSelection) {
+                Button("Take Photo") { showCamera = true }
+                Button("Choose from Library") { showPhotoPicker = true }
+                Button("Cancel", role: .cancel) { }
+            }
+            // 2. Camera Sheet
             .fullScreenCover(isPresented: $showCamera) {
                 CameraPicker(selectedImage: $selectedImage)
                     .ignoresSafeArea()
             }
-            // 2. Handle Library Selection
+            // 3. Gallery Sheet
+            .photosPicker(isPresented: $showPhotoPicker, selection: $selectedItem, matching: .images)
+            
+            // 4. Handle Image Selection
             .onChange(of: selectedItem) { _, newItem in
                 Task {
                     if let data = try? await newItem?.loadTransferable(type: Data.self),
@@ -130,7 +135,7 @@ struct AddItemView: View {
                     }
                 }
             }
-            // 3. Trigger AI when Image Changes (Source doesn't matter)
+            // 5. Trigger AI
             .onChange(of: selectedImage) { _, newImage in
                 if let img = newImage {
                     Task { await analyzeImage(img) }
@@ -187,9 +192,7 @@ struct AddItemView: View {
             )
             dismiss()
         } catch {
-            // CONSOLE LOGGING
             print("🟥 FAILED TO SAVE ITEM: \(error.localizedDescription)")
-            print("   -> Details: \(error)")
         }
         isSaving = false
     }

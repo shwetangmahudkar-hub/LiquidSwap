@@ -13,11 +13,24 @@ class DatabaseService {
     // MARK: - ITEM ACTIONS
     
     func uploadImage(_ image: UIImage) async throws -> String {
-        guard let data = image.jpegData(compressionQuality: 0.5) else {
+        // Use helper to resize & fix orientation
+        guard let data = image.prepareForUpload() else {
             throw URLError(.badURL)
         }
+        
         let filename = "\(UUID().uuidString).jpg"
-        _ = try await client.storage.from("images").upload(filename, data: data, options: FileOptions(cacheControl: "3600", contentType: "image/jpeg", upsert: false))
+        
+        // Upload the clean, small data
+        _ = try await client.storage.from("images").upload(
+            filename,
+            data: data,
+            options: FileOptions(
+                cacheControl: "3600",
+                contentType: "image/jpeg",
+                upsert: false
+            )
+        )
+        
         return try client.storage.from("images").getPublicURL(path: filename).absoluteString
     }
     
@@ -29,6 +42,7 @@ class DatabaseService {
         try await client.from("items").update(item).eq("id", value: item.id).execute()
     }
     
+    // Removes the item from Feed & Inventory
     func deleteItem(id: UUID) async throws {
         try await client.from("items").delete().eq("id", value: id).execute()
     }
@@ -61,7 +75,7 @@ class DatabaseService {
     
     func fetchLikedItems(userId: UUID) async throws -> [TradeItem] {
         struct LikeResponse: Decodable { let item_id: UUID }
-        // 1. Get IDs of liked items
+        
         let likes: [LikeResponse] = try await client
             .from("likes")
             .select("item_id")
@@ -73,7 +87,6 @@ class DatabaseService {
         
         if ids.isEmpty { return [] }
         
-        // 2. Fetch the actual items
         return try await client
             .from("items")
             .select()
@@ -92,13 +105,24 @@ class DatabaseService {
         return try await client.from("trades").select().eq("receiver_id", value: userId).eq("status", value: "pending").execute().value
     }
     
+    // ✨ NEW: Fetch Active Trades (Accepted or Completed)
+    func fetchActiveTrades(userId: UUID) async throws -> [TradeOffer] {
+        return try await client
+            .from("trades")
+            .select()
+            .or("sender_id.eq.\(userId),receiver_id.eq.\(userId)")
+            .in("status", values: ["accepted", "completed"])
+            .order("created_at", ascending: false)
+            .execute()
+            .value
+    }
+    
     func updateTradeStatus(tradeId: UUID, status: String) async throws {
         struct UpdateData: Encodable { let status: String }
         try await client.from("trades").update(UpdateData(status: status)).eq("id", value: tradeId).execute()
     }
     
-    // MARK: - PROFILES (NEW SECTION)
-    // IMPORTANT: These methods must be INSIDE the class
+    // MARK: - PROFILES
     
     func fetchProfile(userId: UUID) async throws -> UserProfile {
         return try await client
@@ -116,4 +140,54 @@ class DatabaseService {
             .upsert(profile)
             .execute()
     }
-} // <--- End of Class (Check that your code is before this bracket)
+    
+    // MARK: - REPORTING
+    
+    func reportItem(itemId: UUID, userId: UUID, reason: String) async throws {
+        struct ReportData: Encodable {
+            let item_id: UUID
+            let reporter_id: UUID
+            let reason: String
+        }
+        let data = ReportData(item_id: itemId, reporter_id: userId, reason: reason)
+        try await client.from("reports").insert(data).execute()
+    }
+
+    // MARK: - REVIEWS
+    
+    func submitReview(reviewerId: UUID, reviewedId: UUID, rating: Int, comment: String) async throws {
+        struct ReviewData: Encodable {
+            let reviewer_id: UUID
+            let reviewed_user_id: UUID
+            let rating: Int
+            let comment: String
+        }
+        let data = ReviewData(reviewer_id: reviewerId, reviewed_user_id: reviewedId, rating: rating, comment: comment)
+        try await client.from("reviews").insert(data).execute()
+    }
+    
+    func fetchUserRating(userId: UUID) async throws -> Double {
+        struct RatingResponse: Decodable { let rating: Int }
+        
+        let reviews: [RatingResponse] = try await client
+            .from("reviews")
+            .select("rating")
+            .eq("reviewed_user_id", value: userId)
+            .execute()
+            .value
+        
+        if reviews.isEmpty { return 0.0 }
+        let total = reviews.reduce(0) { $0 + $1.rating }
+        return Double(total) / Double(reviews.count)
+    }
+    
+    func fetchReviewCount(userId: UUID) async throws -> Int {
+        let count = try await client
+            .from("reviews")
+            .select("*", head: true, count: .exact)
+            .eq("reviewed_user_id", value: userId)
+            .execute()
+            .count
+        return count ?? 0
+    }
+}

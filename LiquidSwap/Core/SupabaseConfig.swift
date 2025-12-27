@@ -8,12 +8,20 @@ enum SupabaseConfig {
     
     // 2. The Client
     static let client: SupabaseClient = {
+        // 🛠️ FIX: Create custom coders to handle ISO8601 Dates correctly
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        
         return SupabaseClient(
             supabaseURL: supabaseURL,
             supabaseKey: supabaseKey,
             options: SupabaseClientOptions(
+                // ✨ Apply the custom coders here
+                db: .init(encoder: encoder, decoder: decoder),
                 auth: .init(
-                    // 3. THIS FIXES THE WARNING
                     emitLocalSessionAsInitialSession: true
                 )
             )

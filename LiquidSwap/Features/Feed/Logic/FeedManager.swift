@@ -1,6 +1,8 @@
 import Foundation
 import Combine
 import SwiftUI
+import CoreLocation
+import Supabase
 
 @MainActor
 class FeedManager: ObservableObject {
@@ -8,51 +10,73 @@ class FeedManager: ObservableObject {
     
     @Published var items: [TradeItem] = []
     @Published var isLoading = false
-    @Published var error: String? // Kept for compat, unused
+    @Published var error: String?
+    
+    // Debug info to verify it's working
+    @Published var debugInfo: String = "Initializing..."
     
     private let db = DatabaseService.shared
     private let userManager = UserManager.shared
+    private let locationManager = LocationManager.shared
+    private let client = SupabaseConfig.client
     
     func fetchFeed() async {
-        guard let userId = userManager.currentUser?.id else { return }
-        
         self.isLoading = true
         self.error = nil
+        self.debugInfo = "Checking Auth..."
+        
+        // 1. Get User ID (Robust Check)
+        var currentUserId = userManager.currentUser?.id
+        if currentUserId == nil {
+            if let session = try? await client.auth.session {
+                currentUserId = session.user.id
+            }
+        }
+        
+        guard let userId = currentUserId else {
+            self.debugInfo = "Error: No User Logged In"
+            self.isLoading = false
+            return
+        }
+        
+        self.debugInfo = "Fetching from Cloud..."
         
         do {
-            // 1. Fetch Feed Items AND Liked Items in parallel
+            // 2. Parallel Fetch: Get Feed items AND Liked items
             async let feedResult = db.fetchFeedItems(currentUserId: userId)
             async let likesResult = db.fetchLikedItems(userId: userId)
             
             let (fetchedItems, likedItems) = try await (feedResult, likesResult)
             
-            // 2. Filter out items I've already liked
+            // 3. Filter out items I've already liked
             let likedIDs = Set(likedItems.map { $0.id })
-            self.allItems = fetchedItems.filter { !likedIDs.contains($0.id) }
             
-            // 3. Apply Categories
-            applyISOFilters()
+            // 4. Calculate Distance & Sort
+            self.allItems = fetchedItems
+                .filter { !likedIDs.contains($0.id) }
+                .map { item in
+                    var modifiedItem = item
+                    // If item has coords, calculate real distance
+                    if let lat = item.latitude, let long = item.longitude {
+                        modifiedItem.distance = locationManager.distanceFromUser(latitude: lat, longitude: long)
+                    }
+                    return modifiedItem
+                }
+                // Sort by Nearest First
+                .sorted { $0.distance < $1.distance }
+            
+            // 5. SKIP ISO FILTERING - Show everything
+            self.items = self.allItems
+            
+            self.debugInfo = "Cloud: \(fetchedItems.count) | Final: \(self.items.count) (Location Based)"
+            print("✅ Feed Loaded: \(self.items.count) items sorted by distance.")
             
         } catch {
-            // CONSOLE LOGGING
-            print("🟥 FEED FETCH ERROR: \(error.localizedDescription)")
-            print("   -> Technical: \(error)")
-            // self.error = "Could not load items." // UI Alert Disabled
+            self.debugInfo = "Error: \(error.localizedDescription)"
+            print("🟥 FEED ERROR: \(error)")
         }
         
         self.isLoading = false
-    }
-    
-    private func applyISOFilters() {
-        // 1. Get User's ISO preferences
-        let isoList = userManager.currentUser?.isoCategories ?? []
-        
-        // 2. Logic: If user has NO ISOs, show ALL (Discovery).
-        if isoList.isEmpty {
-            self.items = allItems
-        } else {
-            self.items = allItems.filter { isoList.contains($0.category) }
-        }
     }
     
     func removeItem(id: UUID) {
