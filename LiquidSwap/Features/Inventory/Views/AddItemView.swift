@@ -1,6 +1,6 @@
 import SwiftUI
 import PhotosUI
-import CoreLocation // Needed for location types
+import CoreLocation
 
 struct AddItemView: View {
     @Environment(\.dismiss) var dismiss
@@ -18,10 +18,9 @@ struct AddItemView: View {
     @State private var selectedItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
     
-    // 🛠️ FIX: Separate triggers for Camera and Gallery
     @State private var showCamera = false
     @State private var showPhotoPicker = false
-    @State private var showSourceSelection = false // Triggers Action Sheet
+    @State private var showSourceSelection = false
     
     // AI State
     @State private var isAnalyzing = false
@@ -30,7 +29,19 @@ struct AddItemView: View {
     // Error & Loading State
     @State private var isSaving = false
     
-    let categories = ["Electronics", "Fashion", "Home & Garden", "Sports", "Books", "Other"]
+    // ✨ NEW: Granular Category List
+    let categories = [
+        "Electronics",
+        "Video Games",
+        "Fashion",
+        "Shoes",
+        "Books",
+        "Sports",
+        "Home & Garden",
+        "Collectibles",
+        "Other"
+    ]
+    
     let conditions = ["New", "Like New", "Good", "Fair", "Poor"]
     
     var body: some View {
@@ -40,7 +51,6 @@ struct AddItemView: View {
                 Section {
                     HStack {
                         Spacer()
-                        // 🛠️ FIX: Button triggers Action Sheet (Rock Solid)
                         Button(action: {
                             showSourceSelection = true
                         }) {
@@ -113,21 +123,15 @@ struct AddItemView: View {
                     .disabled(title.isEmpty || selectedImage == nil || isSaving)
                 }
             }
-            // 1. Source Selection Action Sheet
             .confirmationDialog("Choose Image Source", isPresented: $showSourceSelection) {
                 Button("Take Photo") { showCamera = true }
                 Button("Choose from Library") { showPhotoPicker = true }
                 Button("Cancel", role: .cancel) { }
             }
-            // 2. Camera Sheet
             .fullScreenCover(isPresented: $showCamera) {
-                CameraPicker(selectedImage: $selectedImage)
-                    .ignoresSafeArea()
+                CameraPicker(selectedImage: $selectedImage).ignoresSafeArea()
             }
-            // 3. Gallery Sheet
             .photosPicker(isPresented: $showPhotoPicker, selection: $selectedItem, matching: .images)
-            
-            // 4. Handle Image Selection
             .onChange(of: selectedItem) { _, newItem in
                 Task {
                     if let data = try? await newItem?.loadTransferable(type: Data.self),
@@ -136,7 +140,6 @@ struct AddItemView: View {
                     }
                 }
             }
-            // 5. Trigger AI
             .onChange(of: selectedImage) { _, newImage in
                 if let img = newImage {
                     Task { await analyzeImage(img) }
@@ -186,28 +189,11 @@ struct AddItemView: View {
         isSaving = true
         
         do {
-            // 🛡️ SAFETY FIX: Location Obfuscation
-            // We fetch the exact location but apply a random offset before saving.
-            // 0.004 degrees is roughly 400-500 meters.
+            // Location Obfuscation Logic (From previous step)
             let exactLocation = LocationManager.shared.userLocation
             let fuzzedLatitude = (exactLocation?.coordinate.latitude ?? 0.0) + Double.random(in: -0.004...0.004)
             let fuzzedLongitude = (exactLocation?.coordinate.longitude ?? 0.0) + Double.random(in: -0.004...0.004)
             
-            // Note: We are creating a TradeItem manually here to pass the fuzzed coords,
-            // but UserManager.addItem manages the DB call. We need to update UserManager
-            // or modify the call to accept coords.
-            //
-            // EASIEST PATH: We will overload the UserManager.addItem to accept coords,
-            // or assume UserManager uses the *current* location.
-            // Since UserManager.addItem pulls location internally, we should pass these fuzzed values explicitly.
-            
-            // Let's call the DB directly or update UserManager?
-            // To respect "don't lose code", we'll check UserManager logic.
-            // UserManager pulls location internally. We should update UserManager to accept optional coords.
-            // However, to keep this file self-contained for the "Build", let's update how we call it.
-            
-            // UPDATE: I will provide the UserManager update needed for this below,
-            // but for this file, we assume a new signature:
             try await userManager.addItem(
                 title: title,
                 description: description.isEmpty ? "No description provided." : description,

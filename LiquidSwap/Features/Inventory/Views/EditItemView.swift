@@ -10,6 +10,19 @@ struct EditItemView: View {
     @State private var isSaving = false
     @State private var showDeleteAlert = false
     
+    // ✨ NEW: Granular Category List
+    let categories = [
+        "Electronics",
+        "Video Games",
+        "Fashion",
+        "Shoes",
+        "Books",
+        "Sports",
+        "Home & Garden",
+        "Collectibles",
+        "Other"
+    ]
+    
     var body: some View {
         NavigationStack {
             Form {
@@ -17,7 +30,6 @@ struct EditItemView: View {
                 Section {
                     HStack {
                         Spacer()
-                        // CLOUD FIX: Use 'imageUrl'
                         AsyncImageView(filename: item.imageUrl)
                             .frame(width: 150, height: 150)
                             .cornerRadius(12)
@@ -33,7 +45,7 @@ struct EditItemView: View {
                         .lineLimit(3...6)
                     
                     Picker("Category", selection: $item.category) {
-                        ForEach(["Electronics", "Fashion", "Home & Garden", "Sports", "Books", "Other"], id: \.self) {
+                        ForEach(categories, id: \.self) {
                             Text($0).tag($0)
                         }
                     }
@@ -45,7 +57,7 @@ struct EditItemView: View {
                     }
                 }
                 
-                // FEATURE: Delete Button
+                // Section: Delete Button
                 Section {
                     Button(role: .destructive) {
                         showDeleteAlert = true
@@ -71,7 +83,6 @@ struct EditItemView: View {
                     }
                 }
             }
-            // Confirmation Alert
             .alert("Delete Item?", isPresented: $showDeleteAlert) {
                 Button("Delete", role: .destructive) { deleteItem() }
                 Button("Cancel", role: .cancel) { }

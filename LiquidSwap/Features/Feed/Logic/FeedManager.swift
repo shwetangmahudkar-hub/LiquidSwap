@@ -39,6 +39,9 @@ class FeedManager: ObservableObject {
             return
         }
         
+        // ✨ NEW: Grab User's ISO Categories for Filtering
+        let userIsoCategories = userManager.currentUser?.isoCategories ?? []
+        
         self.debugInfo = "Fetching from Cloud..."
         
         do {
@@ -66,7 +69,6 @@ class FeedManager: ObservableObject {
                         }
                         
                         // B. Fetch Owner Rating (Async)
-                        // We use try? to prevent one failed rating from breaking the whole feed
                         async let rating = self.db.fetchUserRating(userId: item.ownerId)
                         async let count = self.db.fetchReviewCount(userId: item.ownerId)
                         
@@ -83,14 +85,25 @@ class FeedManager: ObservableObject {
                 }
             }
             
-            // 5. Sort by Nearest First
-            self.allItems = enrichedItems.sorted { $0.distance < $1.distance }
+            // 5. ✨ SMART SORT: ISO First, Then Distance
+            self.allItems = enrichedItems.sorted { item1, item2 in
+                let isIso1 = userIsoCategories.contains(item1.category)
+                let isIso2 = userIsoCategories.contains(item2.category)
+                
+                // If item1 is ISO and item2 is NOT, item1 wins (return true)
+                if isIso1 && !isIso2 { return true }
+                // If item1 is NOT ISO and item2 IS, item2 wins (return false)
+                if !isIso1 && isIso2 { return false }
+                
+                // Otherwise (both ISO or neither ISO), sort by distance
+                return item1.distance < item2.distance
+            }
             
-            // 6. SKIP ISO FILTERING - Show everything
+            // 6. Set Final Items
             self.items = self.allItems
             
-            self.debugInfo = "Cloud: \(fetchedItems.count) | Final: \(self.items.count) (Enriched)"
-            print("✅ Feed Loaded: \(self.items.count) items with ratings.")
+            self.debugInfo = "Cloud: \(fetchedItems.count) | ISO Matches: \(self.items.filter { userIsoCategories.contains($0.category) }.count)"
+            print("✅ Feed Loaded: \(self.items.count) items (Smart Sorted).")
             
         } catch {
             self.debugInfo = "Error: \(error.localizedDescription)"

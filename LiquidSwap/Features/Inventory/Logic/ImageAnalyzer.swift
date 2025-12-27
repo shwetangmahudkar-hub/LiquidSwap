@@ -1,10 +1,3 @@
-//
-//  ImageAnalyzer.swift
-//  LiquidSwap
-//
-//  Created by Shwetang Mahudkar on 2025-12-22.
-//
-
 import Vision
 import UIKit
 
@@ -37,7 +30,7 @@ struct ImageAnalyzer {
                 
                 // Get top 5 confident labels
                 let labels = observations
-                    .filter { $0.confidence > 0.3 } // Lowered threshold slightly to catch more
+                    .filter { $0.confidence > 0.3 }
                     .prefix(5)
                     .map { $0.identifier }
                 
@@ -54,16 +47,33 @@ struct ImageAnalyzer {
     
     /// Maps Vision labels to our specific App Categories
     static func suggestCategory(from labels: [String]) -> String {
-        // App Categories: ["Electronics", "Fashion", "Home & Garden", "Sports", "Books", "Other"]
-        
+        // ✨ NEW: Updated Mapping for Granular Categories
         for label in labels {
             let lower = label.lowercased()
             
-            if lower.contains("computer") || lower.contains("phone") || lower.contains("monitor") || lower.contains("screen") || lower.contains("camera") { return "Electronics" }
-            if lower.contains("clothing") || lower.contains("jersey") || lower.contains("shirt") || lower.contains("shoe") || lower.contains("dress") || lower.contains("coat") { return "Fashion" }
-            if lower.contains("plant") || lower.contains("flower") || lower.contains("tree") || lower.contains("vase") || lower.contains("pot") || lower.contains("furniture") || lower.contains("chair") || lower.contains("sofa") { return "Home & Garden" }
-            if lower.contains("ball") || lower.contains("racket") || lower.contains("sport") || lower.contains("bicycle") || lower.contains("helmet") { return "Sports" }
-            if lower.contains("book") || lower.contains("paper") || lower.contains("novel") { return "Books" }
+            // 🎮 Video Games
+            if lower.contains("console") || lower.contains("gamepad") || lower.contains("joystick") || lower.contains("controller") || lower.contains("xbox") || lower.contains("playstation") || lower.contains("nintendo") { return "Video Games" }
+            
+            // 💻 Electronics (General)
+            if lower.contains("computer") || lower.contains("phone") || lower.contains("monitor") || lower.contains("screen") || lower.contains("camera") || lower.contains("laptop") { return "Electronics" }
+            
+            // 👟 Shoes
+            if lower.contains("shoe") || lower.contains("sneaker") || lower.contains("boot") || lower.contains("footwear") || lower.contains("sandal") { return "Shoes" }
+            
+            // 👕 Fashion (General)
+            if lower.contains("clothing") || lower.contains("jersey") || lower.contains("shirt") || lower.contains("dress") || lower.contains("coat") || lower.contains("jeans") { return "Fashion" }
+            
+            // 📚 Books
+            if lower.contains("book") || lower.contains("novel") || lower.contains("paperback") || lower.contains("textbook") { return "Books" }
+            
+            // ⚽ Sports
+            if lower.contains("ball") || lower.contains("racket") || lower.contains("sport") || lower.contains("bicycle") || lower.contains("helmet") || lower.contains("skate") { return "Sports" }
+            
+            // 🏠 Home
+            if lower.contains("plant") || lower.contains("flower") || lower.contains("vase") || lower.contains("pot") || lower.contains("furniture") || lower.contains("chair") || lower.contains("sofa") || lower.contains("table") { return "Home & Garden" }
+            
+            // 🧸 Collectibles
+            if lower.contains("toy") || lower.contains("doll") || lower.contains("action figure") || lower.contains("figurine") || lower.contains("lego") { return "Collectibles" }
         }
         
         return "Other" // Default fallback

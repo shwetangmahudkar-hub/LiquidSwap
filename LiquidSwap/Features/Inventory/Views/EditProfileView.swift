@@ -9,12 +9,23 @@ struct EditProfileView: View {
     @State private var username: String = ""
     @State private var bio: String = ""
     @State private var location: String = ""
-    @State private var isoCategories: [String] = [] // New State
+    @State private var isoCategories: [String] = []
     
     @State private var selectedItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
     
-    let allCategories = ["Electronics", "Fashion", "Home & Garden", "Sports", "Books", "Other"]
+    // ✨ NEW: Granular Category List for ISO Selection
+    let allCategories = [
+        "Electronics",
+        "Video Games",
+        "Fashion",
+        "Shoes",
+        "Books",
+        "Sports",
+        "Home & Garden",
+        "Collectibles",
+        "Other"
+    ]
     
     var body: some View {
         NavigationStack {
@@ -27,7 +38,7 @@ struct EditProfileView: View {
                 
                 ProfileDetailsSection(username: $username, bio: $bio, location: $location)
                 
-                // NEW: ISO Selection Section
+                // ISO Selection Section
                 Section(header: Text("In Search Of (ISO)")) {
                     Text("Select the categories you are interested in trading for.")
                         .font(.caption)
