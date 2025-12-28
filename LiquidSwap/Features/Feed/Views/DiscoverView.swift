@@ -1,16 +1,9 @@
-//
-//  DiscoverView.swift
-//  LiquidSwap
-//
-//  Created by Shwetang Mahudkar on 2025-12-26.
-//
-
-
 import SwiftUI
 import MapKit
 
 struct DiscoverView: View {
-    @StateObject var feedManager = FeedManager()
+    // FIX: Use shared instance instead of creating a new one
+    @ObservedObject var feedManager = FeedManager.shared
     
     // State for Detail View Navigation
     @State private var selectedDetailItem: TradeItem?

@@ -14,7 +14,10 @@ struct EditProfileView: View {
     @State private var selectedItem: PhotosPickerItem?
     @State private var selectedImage: UIImage?
     
-    // ✨ NEW: Granular Category List for ISO Selection
+    // ✨ NEW: State for Verification Sheet
+    @State private var showVerification = false
+    
+    // Granular Category List for ISO Selection
     let allCategories = [
         "Electronics",
         "Video Games",
@@ -37,6 +40,32 @@ struct EditProfileView: View {
                 )
                 
                 ProfileDetailsSection(username: $username, bio: $bio, location: $location)
+                
+                // ✨ NEW: Verification Section
+                Section(header: Text("Trust & Safety")) {
+                    if userManager.currentUser?.isVerified == true {
+                        HStack {
+                            Image(systemName: "checkmark.seal.fill")
+                                .foregroundStyle(.cyan)
+                            Text("Verified Trader")
+                                .bold()
+                                .foregroundStyle(.cyan)
+                            Spacer()
+                        }
+                    } else {
+                        Button(action: { showVerification = true }) {
+                            HStack {
+                                Image(systemName: "checkmark.seal")
+                                Text("Get Verified")
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.gray)
+                            }
+                            .foregroundStyle(.primary)
+                        }
+                    }
+                }
                 
                 // ISO Selection Section
                 Section(header: Text("In Search Of (ISO)")) {
@@ -76,6 +105,10 @@ struct EditProfileView: View {
                         saveProfile()
                     }
                 }
+            }
+            // ✨ NEW: Sheet Presentation
+            .sheet(isPresented: $showVerification) {
+                VerificationView()
             }
             .onChange(of: selectedItem) { _, newItem in
                 Task {

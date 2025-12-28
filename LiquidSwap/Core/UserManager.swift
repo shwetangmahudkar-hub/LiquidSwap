@@ -4,7 +4,8 @@ import Combine
 import Supabase
 import CoreLocation
 
-// Model stays the same
+// MARK: - User Models
+
 struct UserProfile: Codable {
     var id: UUID
     var username: String
@@ -13,6 +14,9 @@ struct UserProfile: Codable {
     var avatarUrl: String?
     var isoCategories: [String] = []
     
+    // Verification Status
+    var isVerified: Bool = false
+    
     enum CodingKeys: String, CodingKey {
         case id
         case username
@@ -20,9 +24,36 @@ struct UserProfile: Codable {
         case location
         case avatarUrl = "avatar_url"
         case isoCategories = "iso_categories"
+        case isVerified = "is_verified"
+    }
+    
+    // Fallback init for decoding if column is missing (Backward Compatibility)
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        username = try container.decode(String.self, forKey: .username)
+        bio = try container.decode(String.self, forKey: .bio)
+        location = try container.decode(String.self, forKey: .location)
+        avatarUrl = try container.decodeIfPresent(String.self, forKey: .avatarUrl)
+        isoCategories = try container.decodeIfPresent([String].self, forKey: .isoCategories) ?? []
+        isVerified = try container.decodeIfPresent(Bool.self, forKey: .isVerified) ?? false
+    }
+    
+    // Explicit Init
+    init(id: UUID, username: String, bio: String, location: String, avatarUrl: String?, isoCategories: [String], isVerified: Bool = false) {
+        self.id = id
+        self.username = username
+        self.bio = bio
+        self.location = location
+        self.avatarUrl = avatarUrl
+        self.isoCategories = isoCategories
+        self.isVerified = isVerified
     }
 }
 
+// MARK: - User Manager
+
+@MainActor
 class UserManager: ObservableObject {
     static let shared = UserManager()
     
@@ -35,6 +66,9 @@ class UserManager: ObservableObject {
     @Published var userReviewCount: Int = 0
     
     @Published var isLoading = false
+    
+    // Blocked Users List
+    @Published var blockedUserIds: [UUID] = []
     
     // Cloud References
     private let db = DatabaseService.shared
@@ -65,16 +99,16 @@ class UserManager: ObservableObject {
         }
     }
     
-    @MainActor
     func clearData() {
         self.currentUser = nil
         self.userItems = []
         self.userRating = 0.0
         self.userReviewCount = 0
+        self.blockedUserIds = [] // Clear blocks
     }
     
     // MARK: - Data Loading
-    @MainActor
+    
     func loadUserData() async {
         guard let session = try? await client.auth.session else { return }
         let userId = session.user.id
@@ -88,7 +122,10 @@ class UserManager: ObservableObject {
             async let ratingTask = db.fetchUserRating(userId: userId)
             async let countTask = db.fetchReviewCount(userId: userId)
             
-            // 3. Fetch User's Profile
+            // 3. Fetch Blocked Users
+            async let blockedTask = db.fetchBlockedUsers(userId: userId)
+            
+            // 4. Fetch User's Profile
             var profile: UserProfile
             do {
                 profile = try await db.fetchProfile(userId: userId)
@@ -106,13 +143,14 @@ class UserManager: ObservableObject {
                 try? await db.upsertProfile(profile)
             }
             
-            // 4. Await all data
+            // 5. Await all data
             self.userItems = try await itemsTask
             self.userRating = try await ratingTask
             self.userReviewCount = try await countTask
+            self.blockedUserIds = try await blockedTask
             self.currentUser = profile
             
-            print("✅ User Data Loaded: \(profile.username) (Rating: \(self.userRating))")
+            print("✅ User Data Loaded: \(profile.username) (Rating: \(self.userRating), Blocked: \(self.blockedUserIds.count))")
             
         } catch {
             print("❌ Error loading user data: \(error)")
@@ -123,8 +161,6 @@ class UserManager: ObservableObject {
     
     // MARK: - Inventory Actions
     
-    // 🛡️ SAFETY UPDATE: Added customLat/customLon parameters
-    @MainActor
     func addItem(title: String, description: String, image: UIImage, customLat: Double? = nil, customLon: Double? = nil) async throws {
         guard canAddItem else {
             throw NSError(domain: "App", code: 400, userInfo: [NSLocalizedDescriptionKey: "Limit Reached"])
@@ -156,7 +192,6 @@ class UserManager: ObservableObject {
         await loadUserData()
     }
     
-    @MainActor
     func updateItem(_ item: TradeItem) async throws {
         self.isLoading = true
         try await db.updateItem(item)
@@ -166,7 +201,6 @@ class UserManager: ObservableObject {
         self.isLoading = false
     }
     
-    @MainActor
     func deleteItem(item: TradeItem) async throws {
         self.isLoading = true
         defer { self.isLoading = false }
@@ -183,7 +217,6 @@ class UserManager: ObservableObject {
     
     // MARK: - Profile Actions
     
-    @MainActor
     func updateProfile(username: String, bio: String, location: String, isoCategories: [String]) async {
         guard var profile = currentUser else { return }
         profile.username = username
@@ -194,7 +227,6 @@ class UserManager: ObservableObject {
         try? await db.upsertProfile(profile)
     }
     
-    @MainActor
     func updateAvatar(image: UIImage) async {
         guard var profile = currentUser else { return }
         if let url = try? await db.uploadImage(image) {
@@ -204,11 +236,65 @@ class UserManager: ObservableObject {
         }
     }
     
-    @MainActor
+    func markAsVerified() async {
+        guard var profile = currentUser else { return }
+        profile.isVerified = true
+        self.currentUser = profile
+        try? await db.upsertProfile(profile)
+    }
+    
     func completeOnboarding(username: String, bio: String, image: UIImage?) async {
         await updateProfile(username: username, bio: bio, location: "Unknown", isoCategories: [])
         if let img = image {
             await updateAvatar(image: img)
+        }
+    }
+    
+    // MARK: - Blocking Actions
+    
+    func blockUser(userId: UUID) async {
+        guard let myId = currentUser?.id else { return }
+        
+        // Optimistic Update
+        if !blockedUserIds.contains(userId) {
+            blockedUserIds.append(userId)
+        }
+        
+        do {
+            try await db.blockUser(blockerId: myId, blockedId: userId)
+            print("✅ Blocked user \(userId)")
+            
+            // Post-Block Cleanup: Force Feed & Trades to refresh
+            // NOTE: This 'await' is now valid because FeedManager.fetchFeed is async
+            await FeedManager.shared.fetchFeed()
+            
+            // If you have a TradeManager, refresh it too (commented out if not available yet)
+            // await TradeManager.shared.loadTradesData()
+            
+        } catch {
+            print("❌ Failed to block: \(error)")
+            // Revert
+            if let index = blockedUserIds.firstIndex(of: userId) {
+                blockedUserIds.remove(at: index)
+            }
+        }
+    }
+    
+    func unblockUser(userId: UUID) async {
+        guard let myId = currentUser?.id else { return }
+        
+        // Optimistic Update
+        if let index = blockedUserIds.firstIndex(of: userId) {
+            blockedUserIds.remove(at: index)
+        }
+        
+        do {
+            try await db.unblockUser(blockerId: myId, blockedId: userId)
+            print("✅ Unblocked user \(userId)")
+        } catch {
+            print("❌ Failed to unblock: \(error)")
+            // Revert
+            blockedUserIds.append(userId)
         }
     }
 }

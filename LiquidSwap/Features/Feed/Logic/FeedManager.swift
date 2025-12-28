@@ -6,26 +6,34 @@ import Supabase
 
 @MainActor
 class FeedManager: ObservableObject {
+    // Singleton Instance
+    static let shared = FeedManager()
+    
     private var allItems: [TradeItem] = []
     
     @Published var items: [TradeItem] = []
     @Published var isLoading = false
     @Published var error: String?
     
-    // Debug info to verify it's working
+    // Debug info
     @Published var debugInfo: String = "Initializing..."
     
     private let db = DatabaseService.shared
-    private let userManager = UserManager.shared
+    
+    // Use computed property to avoid init cycles
+    private var userManager: UserManager { UserManager.shared }
     private let locationManager = LocationManager.shared
     private let client = SupabaseConfig.client
+    
+    // Private init to enforce singleton usage
+    private init() {}
     
     func fetchFeed() async {
         self.isLoading = true
         self.error = nil
         self.debugInfo = "Checking Auth..."
         
-        // 1. Get User ID (Robust Check)
+        // 1. Get User ID
         var currentUserId = userManager.currentUser?.id
         if currentUserId == nil {
             if let session = try? await client.auth.session {
@@ -39,23 +47,32 @@ class FeedManager: ObservableObject {
             return
         }
         
-        // ✨ NEW: Grab User's ISO Categories for Filtering
+        // 2. Capture MainActor Data BEFORE background tasks
+        // We grab these here to avoid "Main actor-isolated" errors inside the TaskGroup
         let userIsoCategories = userManager.currentUser?.isoCategories ?? []
+        let blockedIDs = userManager.blockedUserIds
+        let currentUserLocation = locationManager.userLocation // Capture CLLocation directly
         
         self.debugInfo = "Fetching from Cloud..."
         
         do {
-            // 2. Parallel Fetch: Get Feed items AND Liked items
+            // 3. Parallel Fetch from DB
             async let feedResult = db.fetchFeedItems(currentUserId: userId)
             async let likesResult = db.fetchLikedItems(userId: userId)
             
             let (fetchedItems, likedItems) = try await (feedResult, likesResult)
             
-            // 3. Filter out items I've already liked
+            // 4. Filter Items
             let likedIDs = Set(likedItems.map { $0.id })
-            let visibleItems = fetchedItems.filter { !likedIDs.contains($0.id) }
             
-            // 4. HYDRATION: Calculate Distance & Fetch Ratings (Parallel)
+            let visibleItems = fetchedItems.filter { item in
+                let isLiked = likedIDs.contains(item.id)
+                let isBlocked = blockedIDs.contains(item.ownerId)
+                return !isLiked && !isBlocked
+            }
+            
+            // 5. Hydration (Background Work)
+            // We pass the captured 'currentUserLocation' into the task so we don't touch LocationManager
             var enrichedItems: [TradeItem] = []
             
             await withTaskGroup(of: TradeItem.self) { group in
@@ -63,18 +80,28 @@ class FeedManager: ObservableObject {
                     group.addTask {
                         var modifiedItem = item
                         
-                        // A. Calculate Distance
-                        if let lat = item.latitude, let long = item.longitude {
-                            modifiedItem.distance = self.locationManager.distanceFromUser(latitude: lat, longitude: long)
+                        // A. Calculate Distance using captured location (Safe)
+                        if let userLoc = currentUserLocation,
+                           let lat = item.latitude,
+                           let lon = item.longitude {
+                            let itemLoc = CLLocation(latitude: lat, longitude: lon)
+                            // Calculate distance in meters, convert to kilometers if needed
+                            // Storing raw meters as per standard 'distance' field expectation
+                            modifiedItem.distance = userLoc.distance(from: itemLoc)
                         }
                         
-                        // B. Fetch Owner Rating (Async)
+                        // B. Fetch Owner Data
+                        // These DB calls are async and safe to call here
                         async let rating = self.db.fetchUserRating(userId: item.ownerId)
                         async let count = self.db.fetchReviewCount(userId: item.ownerId)
+                        async let profile = self.db.fetchProfile(userId: item.ownerId)
                         
-                        let (r, c) = await (try? rating, try? count)
+                        let (r, c, p) = await (try? rating, try? count, try? profile)
+                        
                         modifiedItem.ownerRating = r ?? 0.0
                         modifiedItem.ownerReviewCount = c ?? 0
+                        modifiedItem.ownerUsername = p?.username ?? "Trader"
+                        modifiedItem.ownerIsVerified = p?.isVerified ?? false
                         
                         return modifiedItem
                     }
@@ -85,25 +112,21 @@ class FeedManager: ObservableObject {
                 }
             }
             
-            // 5. ✨ SMART SORT: ISO First, Then Distance
+            // 6. Smart Sort
             self.allItems = enrichedItems.sorted { item1, item2 in
                 let isIso1 = userIsoCategories.contains(item1.category)
                 let isIso2 = userIsoCategories.contains(item2.category)
                 
-                // If item1 is ISO and item2 is NOT, item1 wins (return true)
                 if isIso1 && !isIso2 { return true }
-                // If item1 is NOT ISO and item2 IS, item2 wins (return false)
                 if !isIso1 && isIso2 { return false }
                 
-                // Otherwise (both ISO or neither ISO), sort by distance
                 return item1.distance < item2.distance
             }
             
-            // 6. Set Final Items
             self.items = self.allItems
             
-            self.debugInfo = "Cloud: \(fetchedItems.count) | ISO Matches: \(self.items.filter { userIsoCategories.contains($0.category) }.count)"
-            print("✅ Feed Loaded: \(self.items.count) items (Smart Sorted).")
+            self.debugInfo = "Cloud: \(fetchedItems.count) | Hidden: \(fetchedItems.count - self.items.count)"
+            print("✅ Feed Loaded: \(self.items.count) items.")
             
         } catch {
             self.debugInfo = "Error: \(error.localizedDescription)"

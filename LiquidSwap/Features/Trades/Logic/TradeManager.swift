@@ -46,19 +46,40 @@ class TradeManager: ObservableObject {
         self.isLoading = true
         defer { self.isLoading = false }
         
+        // ✨ NEW: Get the current block list
+        let blockedIDs = userManager.blockedUserIds
+        
         do {
             // Run all fetches in parallel
             async let interestedResult = loadInterestedItems(userId: userId)
             async let offersResult = loadIncomingOffers(userId: userId)
             async let activeResult = loadActiveTrades(userId: userId)
             
-            let (interested, offers, active) = try await (interestedResult, offersResult, activeResult)
+            let (interested, rawOffers, rawActive) = try await (interestedResult, offersResult, activeResult)
             
+            // ✨ FILTER: Incoming Offers
+            // Remove offers sent by blocked users
+            let filteredOffers = rawOffers.filter { offer in
+                !blockedIDs.contains(offer.senderId)
+            }
+            
+            // ✨ FILTER: Active Trades
+            // Remove trades where the partner is blocked
+            let filteredActive = rawActive.filter { trade in
+                let partnerId = (trade.senderId == userId) ? trade.receiverId : trade.senderId
+                return !blockedIDs.contains(partnerId)
+            }
+            
+            // Hydrate (Fetch Item Details) only for the visible trades
             self.interestedItems = interested
-            self.incomingOffers = offers
-            self.activeTrades = active
+            self.incomingOffers = await hydrateTrades(filteredOffers)
+            self.activeTrades = await hydrateTrades(filteredActive)
             
-            print("✅ Loaded: \(interested.count) likes, \(offers.count) offers, \(active.count) chats")
+            print("✅ Loaded: \(interested.count) likes, \(self.incomingOffers.count) offers, \(self.activeTrades.count) chats")
+            if !blockedIDs.isEmpty {
+                print("🚫 Blocked: Hidden \(rawOffers.count - self.incomingOffers.count) offers and \(rawActive.count - self.activeTrades.count) chats.")
+            }
+            
         } catch {
             handleError(error, context: "load trades data")
         }
@@ -70,16 +91,16 @@ class TradeManager: ObservableObject {
     }
     
     private func loadIncomingOffers(userId: UUID) async throws -> [TradeOffer] {
-        let offers = try await db.fetchIncomingOffers(userId: userId)
-        return await hydrateTrades(offers)
+        // Return raw offers, we hydrate later
+        return try await db.fetchIncomingOffers(userId: userId)
     }
     
     private func loadActiveTrades(userId: UUID) async throws -> [TradeOffer] {
-        let trades = try await db.fetchActiveTrades(userId: userId)
-        return await hydrateTrades(trades)
+        // Return raw trades, we hydrate later
+        return try await db.fetchActiveTrades(userId: userId)
     }
     
-    // ✨ FIX: Use 'withTaskGroup' instead of 'withThrowingTaskGroup' to avoid unhandled errors
+    // Hydrate Trade Objects with full Item Details
     private func hydrateTrades(_ trades: [TradeOffer]) async -> [TradeOffer] {
         var result = trades
         
@@ -160,7 +181,11 @@ class TradeManager: ObservableObject {
         
         let offer = TradeOffer(id: UUID(), senderId: senderId, receiverId: wantedItem.ownerId, offeredItemId: myItem.id, wantedItemId: wantedItem.id, status: "pending", createdAt: Date())
         do {
+            // 1. Create Trade
             try await db.createTradeOffer(offer: offer)
+            // 2. Auto-Like for Activity Hub
+            try? await db.saveLike(userId: senderId, itemId: wantedItem.id)
+            
             interestedItems.removeAll { $0.id == wantedItem.id }
             return true
         } catch { return false }
@@ -199,5 +224,39 @@ class TradeManager: ObservableObject {
             fullTrade.wantedItem = wantedItem
             return fullTrade
         } catch { return nil }
+    }
+    
+    // MARK: - Counter Offer Logic
+    
+    func sendCounterOffer(originalTrade: TradeOffer, newWantedItem: TradeItem) async -> Bool {
+        guard let myId = userManager.currentUser?.id else { return false }
+        
+        guard originalTrade.receiverId == myId else { return false }
+        
+        let myItemId = originalTrade.wantedItemId
+        
+        let newOffer = TradeOffer(
+            id: UUID(),
+            senderId: myId,
+            receiverId: originalTrade.senderId,
+            offeredItemId: myItemId,
+            wantedItemId: newWantedItem.id,
+            status: "pending",
+            createdAt: Date()
+        )
+        
+        do {
+            try await db.updateTradeStatus(tradeId: originalTrade.id, status: "countered")
+            try await db.createTradeOffer(offer: newOffer)
+            try? await db.saveLike(userId: myId, itemId: newWantedItem.id)
+            
+            if let index = incomingOffers.firstIndex(where: { $0.id == originalTrade.id }) {
+                incomingOffers.remove(at: index)
+            }
+            return true
+        } catch {
+            print("❌ Counter Offer Failed: \(error)")
+            return false
+        }
     }
 }

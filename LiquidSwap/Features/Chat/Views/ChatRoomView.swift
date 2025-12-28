@@ -4,11 +4,15 @@ import CoreLocation
 import PhotosUI
 
 struct ChatRoomView: View {
-    // ✅ CRITICAL FIX: Pass the full trade object.
-    // This ensures we have the correct ID immediately.
     let trade: TradeOffer
     
     @ObservedObject var chatManager = ChatManager.shared
+    
+    // ✨ NEW: Observe UserManager for blocking
+    @ObservedObject var userManager = UserManager.shared
+    
+    @Environment(\.dismiss) var dismiss
+    
     @State private var newMessageText = ""
     @FocusState private var isFocused: Bool
     
@@ -20,14 +24,21 @@ struct ChatRoomView: View {
     @State private var showDealDashboard = true
     @State private var showSafeMap = false
     
+    // ✨ NEW: Safety Alerts
+    @State private var showBlockAlert = false
+    @State private var showReportAlert = false
+    
+    // Counter Offer State
+    @State private var showCounterSheet = false
+    
     // Photo State
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var selectedCameraImage: UIImage?
     @State private var showCamera = false
     @State private var isSendingImage = false
+    @State private var showAttachmentOptions = false
     
-    // ✅ FIX: Robust Partner ID
-    // Uses ChatManager's trusted ID. If that fails, defaults to trade receiver to prevent crash.
+    // Robust Partner ID Logic
     var partnerId: UUID {
         guard let myId = chatManager.currentUserId ?? UserManager.shared.currentUser?.id else {
             return trade.receiverId
@@ -40,9 +51,14 @@ struct ChatRoomView: View {
             LiquidBackground()
             
             VStack(spacing: 0) {
-                DealDashboard(trade: trade, isExpanded: $showDealDashboard)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(10)
+                // Deal Dashboard
+                DealDashboard(
+                    trade: trade,
+                    isExpanded: $showDealDashboard,
+                    currentUserId: UserManager.shared.currentUser?.id,
+                    onCounter: { showCounterSheet = true }
+                )
+                .zIndex(10)
                 
                 messageListSection
                     .onTapGesture { dismissKeyboard() }
@@ -52,16 +68,33 @@ struct ChatRoomView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    completeTradeAction()
-                } label: {
-                    if isCompletingTrade {
-                        ProgressView()
-                    } else {
-                        Image(systemName: "checkmark.seal.fill").foregroundStyle(.cyan)
+                HStack(spacing: 16) {
+                    // 1. Complete Trade Button
+                    Button {
+                        completeTradeAction()
+                    } label: {
+                        if isCompletingTrade {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "checkmark.seal.fill").foregroundStyle(.cyan)
+                        }
+                    }
+                    .disabled(isCompletingTrade)
+                    
+                    // 2. ✨ NEW: Safety Menu
+                    Menu {
+                        Button(role: .destructive, action: { showBlockAlert = true }) {
+                            Label("Block User", systemImage: "hand.raised.fill")
+                        }
+                        
+                        Button(action: { showReportAlert = true }) {
+                            Label("Report User", systemImage: "exclamationmark.bubble")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .foregroundStyle(.white)
                     }
                 }
-                .disabled(isCompletingTrade)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -70,14 +103,13 @@ struct ChatRoomView: View {
                 onSend: sendMessage,
                 onMapTap: { showSafeMap = true },
                 onCameraTap: { showCamera = true },
-                isMapEnabled: hasLocationData,
-                selectedPhotoItem: $selectedPhotoItem
+                selectedPhotoItem: $selectedPhotoItem,
+                showOptions: $showAttachmentOptions
             )
         }
         .onAppear {
             TabBarManager.shared.hide()
             fetchPartnerProfile()
-            // We do NOT need to fetchActiveTrade anymore, we have it!
         }
         .onDisappear { TabBarManager.shared.show() }
         
@@ -88,6 +120,7 @@ struct ChatRoomView: View {
                 if let data = try? await newItem.loadTransferable(type: Data.self) {
                     await sendImageData(data)
                     await MainActor.run { selectedPhotoItem = nil }
+                    withAnimation { showAttachmentOptions = false }
                 }
             }
         }
@@ -99,6 +132,7 @@ struct ChatRoomView: View {
                 Task {
                     await sendImageData(data)
                     await MainActor.run { selectedCameraImage = nil }
+                    withAnimation { showAttachmentOptions = false }
                 }
             }
         }
@@ -107,16 +141,45 @@ struct ChatRoomView: View {
         } message: {
             Text("This trade is no longer active.")
         }
+        // ✨ NEW: Block Confirmation
+        .alert("Block User?", isPresented: $showBlockAlert) {
+            Button("Block", role: .destructive) {
+                Task {
+                    await userManager.blockUser(userId: partnerId)
+                    dismiss() // Close chat immediately
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("You will no longer receive messages from this user.")
+        }
+        // ✨ NEW: Report Confirmation
+        .alert("Report User?", isPresented: $showReportAlert) {
+            Button("Spam", role: .destructive) { submitReport("Spam") }
+            Button("Abusive", role: .destructive) { submitReport("Abusive") }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Please select a reason for reporting.")
+        }
         .sheet(isPresented: $showRatingSheet) {
             RateUserView(targetUserId: partnerId, targetUsername: partnerName)
         }
         .sheet(isPresented: $showSafeMap) {
-            if let loc1 = getCoordinate(for: trade.offeredItem),
-               let loc2 = getCoordinate(for: trade.wantedItem) {
-                SafeMeetingPointView(locationA: loc1, locationB: loc2)
+            // Robust Location Logic
+            let userLoc = LocationManager.shared.userLocation?.coordinate
+            let loc1 = getCoordinate(for: trade.offeredItem) ?? userLoc
+            let loc2 = getCoordinate(for: trade.wantedItem) ?? userLoc
+            
+            if let start = loc1, let end = loc2 {
+                SafeMeetingPointView(locationA: start, locationB: end)
             } else {
-                Text("Location data unavailable.").presentationDetents([.fraction(0.3)])
+                let defaultLoc = CLLocationCoordinate2D(latitude: 43.6532, longitude: -79.3832)
+                SafeMeetingPointView(locationA: defaultLoc, locationB: defaultLoc)
             }
+        }
+        .sheet(isPresented: $showCounterSheet) {
+            CounterOfferSheet(originalTrade: trade)
+                .presentationDetents([.medium, .large])
         }
     }
     
@@ -128,7 +191,6 @@ struct ChatRoomView: View {
                 LazyVStack(spacing: 12) {
                     Color.clear.frame(height: 10)
                     
-                    // ✅ CRITICAL FIX: Use trade.id directly. No guessing.
                     let messages = chatManager.conversations[trade.id] ?? []
                     
                     if messages.isEmpty {
@@ -162,7 +224,9 @@ struct ChatRoomView: View {
     }
     
     func getCoordinate(for item: TradeItem?) -> CLLocationCoordinate2D? {
-        guard let lat = item?.latitude, let lon = item?.longitude, lat != 0, lon != 0 else { return nil }
+        guard let lat = item?.latitude, let lon = item?.longitude,
+              lat != 0, lon != 0,
+              !lat.isNaN, !lon.isNaN else { return nil }
         return CLLocationCoordinate2D(latitude: lat, longitude: lon)
     }
     
@@ -174,13 +238,11 @@ struct ChatRoomView: View {
         guard !newMessageText.isEmpty else { return }
         let text = newMessageText
         newMessageText = ""
-        // ✅ CRITICAL FIX: Use trade.id directly
         Task { await chatManager.sendMessage(text, to: partnerId, tradeId: trade.id) }
     }
     
     func sendImageData(_ data: Data) async {
         await MainActor.run { isSendingImage = true }
-        // ✅ CRITICAL FIX: Use trade.id directly
         await chatManager.sendImage(data: data, to: partnerId, tradeId: trade.id)
         await MainActor.run { isSendingImage = false }
     }
@@ -207,6 +269,13 @@ struct ChatRoomView: View {
             }
         }
     }
+    
+    func submitReport(_ reason: String) {
+        guard let myId = UserManager.shared.currentUser?.id else { return }
+        Task {
+            try? await DatabaseService.shared.reportUser(reporterId: myId, reportedId: partnerId, reason: reason)
+        }
+    }
 }
 
 // MARK: - SUBVIEWS
@@ -214,6 +283,8 @@ struct ChatRoomView: View {
 struct DealDashboard: View {
     let trade: TradeOffer
     @Binding var isExpanded: Bool
+    let currentUserId: UUID?
+    var onCounter: () -> Void
     
     var body: some View {
         VStack(spacing: 0) {
@@ -230,31 +301,57 @@ struct DealDashboard: View {
             }
             
             if isExpanded {
-                HStack(spacing: 0) {
-                    VStack {
-                        Text("You Get").font(.caption2).foregroundStyle(.gray)
-                        AsyncImageView(filename: trade.offeredItem?.imageUrl)
-                            .frame(width: 50, height: 50).cornerRadius(8)
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2)))
-                        Text(trade.offeredItem?.title ?? "?")
-                            .font(.caption2).bold().foregroundStyle(.white).lineLimit(1)
+                VStack(spacing: 0) {
+                    HStack(spacing: 0) {
+                        VStack {
+                            Text("You Get").font(.caption2).foregroundStyle(.gray)
+                            AsyncImageView(filename: trade.offeredItem?.imageUrl)
+                                .frame(width: 50, height: 50).cornerRadius(8)
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2)))
+                            Text(trade.offeredItem?.title ?? "?")
+                                .font(.caption2).bold().foregroundStyle(.white).lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        
+                        Image(systemName: "arrow.left.arrow.right")
+                            .foregroundStyle(.cyan).font(.title3).padding(.horizontal, 8)
+                        
+                        VStack {
+                            Text("You Give").font(.caption2).foregroundStyle(.gray)
+                            AsyncImageView(filename: trade.wantedItem?.imageUrl)
+                                .frame(width: 50, height: 50).cornerRadius(8)
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2)))
+                            Text(trade.wantedItem?.title ?? "?")
+                                .font(.caption2).bold().foregroundStyle(.white).lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
                     
-                    Image(systemName: "arrow.left.arrow.right")
-                        .foregroundStyle(.cyan).font(.title3).padding(.horizontal, 8)
-                    
-                    VStack {
-                        Text("You Give").font(.caption2).foregroundStyle(.gray)
-                        AsyncImageView(filename: trade.wantedItem?.imageUrl)
-                            .frame(width: 50, height: 50).cornerRadius(8)
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.2)))
-                        Text(trade.wantedItem?.title ?? "?")
-                            .font(.caption2).bold().foregroundStyle(.white).lineLimit(1)
+                    if trade.status == "pending" {
+                        if trade.receiverId == currentUserId {
+                            Button(action: onCounter) {
+                                Text("Counter Offer")
+                                    .font(.caption).bold()
+                                    .foregroundStyle(.white)
+                                    .padding(.vertical, 6)
+                                    .padding(.horizontal, 12)
+                                    .background(Color.orange.opacity(0.8))
+                                    .cornerRadius(8)
+                            }
+                            .padding(.bottom, 12)
+                        } else {
+                            Text("Waiting for partner response...")
+                                .font(.caption2).italic().foregroundStyle(.gray)
+                                .padding(.bottom, 12)
+                        }
+                    } else {
+                        Text("Status: \(trade.status.capitalized)")
+                            .font(.caption).bold().foregroundStyle(.green)
+                            .padding(.bottom, 12)
                     }
-                    .frame(maxWidth: .infinity)
                 }
-                .padding(.vertical, 12).background(Color.black.opacity(0.3))
+                .background(Color.black.opacity(0.3))
                 .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.white.opacity(0.1)), alignment: .bottom)
             }
         }
@@ -264,39 +361,86 @@ struct DealDashboard: View {
     }
 }
 
+// Visual "Drop Up" Menu
 struct ChatInputBar: View {
     @Binding var text: String
     var onSend: () -> Void
     var onMapTap: () -> Void
     var onCameraTap: () -> Void
-    var isMapEnabled: Bool
     @Binding var selectedPhotoItem: PhotosPickerItem?
+    @Binding var showOptions: Bool
     
     var body: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            Menu {
-                Button(action: onMapTap) { Label("Safe Meeting Point", systemImage: "shield.check.fill") }
-                    .disabled(!isMapEnabled)
-                Button(action: onCameraTap) { Label("Take Photo", systemImage: "camera.fill") }
-                PhotosPicker(selection: $selectedPhotoItem, matching: .images) { Label("Photo Library", systemImage: "photo.on.rectangle") }
-            } label: {
-                Image(systemName: "plus.circle.fill").font(.title2).foregroundStyle(.cyan)
-                    .padding(8).background(Color.white.opacity(0.1)).clipShape(Circle())
-            }
-
-            TextField("Message...", text: $text, axis: .vertical)
-                .padding(12).background(Color.white.opacity(0.1)).cornerRadius(20)
-                .foregroundStyle(.white).lineLimit(1...5)
-                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.2), lineWidth: 1))
+        VStack(alignment: .leading, spacing: 0) {
             
-            Button(action: onSend) {
-                Image(systemName: "arrow.up.circle.fill").font(.system(size: 38))
-                    .foregroundStyle(text.isEmpty ? .gray : .cyan)
-                    .shadow(color: text.isEmpty ? .clear : .cyan.opacity(0.5), radius: 5)
+            // 1. Vertical "Drop Up" Menu
+            if showOptions {
+                VStack(spacing: 16) {
+                    
+                    Button(action: {
+                        onMapTap()
+                        withAnimation { showOptions = false }
+                    }) {
+                        Image(systemName: "checkmark.shield.fill")
+                            .font(.title3)
+                            .foregroundStyle(.green)
+                            .frame(width: 30, height: 30)
+                    }
+                    
+                    Button(action: {
+                        onCameraTap()
+                        withAnimation { showOptions = false }
+                    }) {
+                        Image(systemName: "camera.fill")
+                            .font(.title3)
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                    }
+                    
+                    PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                        Image(systemName: "photo.on.rectangle")
+                            .font(.title3)
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                    }
+                }
+                .padding(12)
+                .background(.ultraThinMaterial)
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
+                .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
+                .padding(.leading, 12) // Align roughly with the plus button
+                .padding(.bottom, 8)
+                .transition(.scale(scale: 0.8, anchor: .bottomLeading).combined(with: .opacity))
             }
-            .disabled(text.isEmpty)
+            
+            // 2. The Main Input Bar
+            HStack(alignment: .bottom, spacing: 12) {
+                
+                Button(action: { withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) { showOptions.toggle() } }) {
+                    Image(systemName: showOptions ? "xmark.circle.fill" : "plus.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(showOptions ? .gray : .cyan)
+                        .padding(8)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(Circle())
+                }
+
+                TextField("Message...", text: $text, axis: .vertical)
+                    .padding(12).background(Color.white.opacity(0.1)).cornerRadius(20)
+                    .foregroundStyle(.white).lineLimit(1...5)
+                    .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.2), lineWidth: 1))
+                
+                Button(action: onSend) {
+                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 38))
+                        .foregroundStyle(text.isEmpty ? .gray : .cyan)
+                        .shadow(color: text.isEmpty ? .clear : .cyan.opacity(0.5), radius: 5)
+                }
+                .disabled(text.isEmpty)
+            }
+            .padding(.horizontal).padding(.top, 12).padding(.bottom, 8)
+            .background(.ultraThinMaterial)
         }
-        .padding(.horizontal).padding(.top, 12).padding(.bottom, 8).background(.ultraThinMaterial)
     }
 }
 
@@ -340,34 +484,60 @@ struct SafeMeetingPointView: View {
     let locationA: CLLocationCoordinate2D
     let locationB: CLLocationCoordinate2D
     @Environment(\.dismiss) var dismiss
-    @State private var position: MapCameraPosition
+    
     @State private var safeSpots: [SafeSpotItem] = []
     @State private var isLoading = false
     @State private var selectedSpot: SafeSpotItem?
     
+    // Fallback for iOS 16
+    @State private var legacyRegion: MKCoordinateRegion
+    
+    // New API for iOS 17
+    @State private var position: MapCameraPosition = .automatic
+    
     init(locationA: CLLocationCoordinate2D, locationB: CLLocationCoordinate2D) {
         self.locationA = locationA
         self.locationB = locationB
-        let midLat = (locationA.latitude + locationB.latitude) / 2
-        let midLon = (locationA.longitude + locationB.longitude) / 2
-        let center = CLLocationCoordinate2D(latitude: midLat, longitude: midLon)
-        let span = MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-        _position = State(initialValue: .region(MKCoordinateRegion(center: center, span: span)))
+        
+        let validA = (locationA.latitude != 0 && locationA.longitude != 0)
+        let validB = (locationB.latitude != 0 && locationB.longitude != 0)
+        
+        let centerLat = validA && validB ? (locationA.latitude + locationB.latitude) / 2 : (validA ? locationA.latitude : 0)
+        let centerLon = validA && validB ? (locationA.longitude + locationB.longitude) / 2 : (validA ? locationA.longitude : 0)
+        let center = CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon)
+        let span = MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
+        
+        // Init region for all versions
+        _legacyRegion = State(initialValue: MKCoordinateRegion(center: center, span: span))
+        
+        // Init position for iOS 17+
+        if #available(iOS 17.0, *) {
+            _position = State(initialValue: .region(MKCoordinateRegion(center: center, span: span)))
+        }
     }
     
     var body: some View {
         NavigationStack {
             ZStack {
-                Map(position: $position) {
-                    ForEach(safeSpots) { spotWrapper in
-                        Annotation(spotWrapper.item.name ?? "Safe Spot", coordinate: spotWrapper.item.placemark.coordinate) {
-                            Button(action: { selectedSpot = spotWrapper }) {
-                                Image(systemName: getIcon(for: spotWrapper.item)).padding(8).background(Color.green).clipShape(Circle()).foregroundStyle(.white).shadow(radius: 4).scaleEffect(selectedSpot?.id == spotWrapper.id ? 1.2 : 1.0)
+                // Version Check for Map
+                if #available(iOS 17.0, *) {
+                    Map(position: $position) {
+                        ForEach(safeSpots) { spotWrapper in
+                            Annotation(spotWrapper.item.name ?? "Safe Spot", coordinate: spotWrapper.item.placemark.coordinate) {
+                                mapIcon(for: spotWrapper)
                             }
                         }
                     }
+                    .ignoresSafeArea(edges: .bottom)
+                } else {
+                    // Fallback for iOS 16 and older
+                    Map(coordinateRegion: $legacyRegion, annotationItems: safeSpots) { spotWrapper in
+                        MapAnnotation(coordinate: spotWrapper.item.placemark.coordinate) {
+                            mapIcon(for: spotWrapper)
+                        }
+                    }
+                    .ignoresSafeArea(edges: .bottom)
                 }
-                .ignoresSafeArea(edges: .bottom)
                 
                 VStack {
                     Spacer()
@@ -387,6 +557,18 @@ struct SafeMeetingPointView: View {
             .navigationTitle("Safe Meeting Point").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
             .onAppear { findSafeSpotsParallel() }
+        }
+    }
+    
+    func mapIcon(for spotWrapper: SafeSpotItem) -> some View {
+        Button(action: { selectedSpot = spotWrapper }) {
+            Image(systemName: getIcon(for: spotWrapper.item))
+                .padding(8)
+                .background(Color.green)
+                .clipShape(Circle())
+                .foregroundStyle(.white)
+                .shadow(radius: 4)
+                .scaleEffect(selectedSpot?.id == spotWrapper.id ? 1.2 : 1.0)
         }
     }
     

@@ -6,12 +6,21 @@ enum CardSwipeDirection {
     case right
 }
 
+// Wrapper to make UUID identifiable for Sheet presentation
+struct ProfileDestination: Identifiable {
+    let id: UUID
+}
+
 struct FeedView: View {
-    @StateObject var feedManager = FeedManager()
+    // FIX: Use shared instance instead of creating a new one
+    @ObservedObject var feedManager = FeedManager.shared
     @ObservedObject var tradeManager = TradeManager.shared
     
     // State for Detail View Navigation
     @State private var selectedDetailItem: TradeItem?
+    
+    // State for Public Profile Sheet
+    @State private var selectedProfile: ProfileDestination?
     
     // State to track the last swipe direction for button animations
     @State private var lastSwipeDirection: CardSwipeDirection = .left
@@ -71,6 +80,9 @@ struct FeedView: View {
                                             lastSwipeDirection = direction
                                             handleSwipe(direction: direction, item: item)
                                         }
+                                        .onProfileTap {
+                                            selectedProfile = ProfileDestination(id: item.ownerId)
+                                        }
                                         .onTapGesture { selectedDetailItem = item }
                                         .frame(width: cardWidth, height: cardHeight)
                                         .zIndex(100)
@@ -115,6 +127,10 @@ struct FeedView: View {
             }
             .fullScreenCover(item: $selectedDetailItem) { item in
                 ProductDetailView(item: item)
+            }
+            .sheet(item: $selectedProfile) { dest in
+                PublicProfileView(userId: dest.id)
+                    .presentationDetents([.fraction(0.85)]) // Partial sheet
             }
             .alert("Error", isPresented: $tradeManager.showError) {
                 Button("OK") { tradeManager.clearError() }
@@ -167,13 +183,15 @@ struct GhostCard: View {
 struct DraggableCard: View {
     let item: TradeItem
     var onSwipe: (CardSwipeDirection) -> Void
+    var onProfileTap: (() -> Void)? = nil
+    
     @State private var offset = CGSize.zero
     @State private var rotation: Double = 0
     @State private var lastHapticStep: Int = 0
     
     var body: some View {
         ZStack {
-            TinderGlassCard(item: item)
+            TinderGlassCard(item: item, onProfileTap: onProfileTap)
             
             if offset.width > 0 {
                 VStack {
@@ -232,11 +250,19 @@ struct DraggableCard: View {
             onSwipe(direction)
         }
     }
+    
+    func onProfileTap(_ action: @escaping () -> Void) -> DraggableCard {
+        var copy = self
+        copy.onProfileTap = action
+        return copy
+    }
 }
 
 // 3. TinderGlassCard
 struct TinderGlassCard: View {
     let item: TradeItem
+    var onProfileTap: (() -> Void)? = nil
+    
     var body: some View {
         ZStack(alignment: .bottom) {
             AsyncImageView(filename: item.imageUrl)
@@ -252,17 +278,41 @@ struct TinderGlassCard: View {
                     Badge(text: item.category, color: .purple)
                 }
                 
-                // ✨ NEW: Star Rating Display
-                HStack(spacing: 4) {
-                    ForEach(1...5, id: \.self) { index in
-                        Image(systemName: "star.fill")
-                            .font(.caption2)
-                            .foregroundStyle(index <= Int(item.ownerRating ?? 0) ? .yellow : .gray.opacity(0.5))
+                Button(action: {
+                    onProfileTap?()
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "person.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.cyan)
+                        
+                        Text(item.ownerUsername ?? "Loading...")
+                            .font(.caption).bold()
+                            .foregroundStyle(.white)
+                        
+                        // Verification Checkmark
+                        if item.ownerIsVerified == true {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.cyan)
+                        }
+                        
+                        Text("•")
+                            .font(.caption).foregroundStyle(.white.opacity(0.5))
+                        
+                        HStack(spacing: 2) {
+                            Image(systemName: "star.fill").font(.caption2).foregroundStyle(.yellow)
+                            Text("\(String(format: "%.1f", item.ownerRating ?? 0))")
+                                .font(.caption2).bold().foregroundStyle(.white)
+                            
+                        }
                     }
-                    Text("(\(item.ownerReviewCount ?? 0))")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.8))
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                    .background(Color.black.opacity(0.4))
+                    .cornerRadius(12)
                 }
+                .buttonStyle(.plain)
                 .padding(.bottom, 4)
                 
                 Text(item.condition).font(.subheadline).bold().foregroundStyle(.cyan).padding(.bottom, 2)
@@ -318,21 +368,6 @@ struct EmptyFeedState: View {
                 .foregroundStyle(.white.opacity(0.7))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
-            
-            // Diagnostics
-            VStack(spacing: 4) {
-                Text("DIAGNOSTICS")
-                    .font(.caption2).bold().foregroundStyle(.cyan)
-                Text(feedManager.debugInfo)
-                    .font(.caption2)
-                    .fontDesign(.monospaced)
-                    .foregroundStyle(.yellow)
-                    .multilineTextAlignment(.center)
-            }
-            .padding(12)
-            .background(Color.black.opacity(0.8))
-            .cornerRadius(8)
-            .padding(.top, 20)
             
             Button("Refresh Feed") {
                 Task { await feedManager.fetchFeed() }

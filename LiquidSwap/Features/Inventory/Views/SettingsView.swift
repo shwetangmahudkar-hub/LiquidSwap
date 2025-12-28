@@ -3,11 +3,12 @@ import Supabase
 
 struct ProfileSettingsView: View {
     @EnvironmentObject var authVM: AuthViewModel
+    // ✨ NEW: Access UserManager for blocked list
+    @ObservedObject var userManager = UserManager.shared
+    
     @Binding var showSettings: Bool
     
     @State private var showResetAlert = false
-    
-    // ✅ FIXED: Missing state variable added
     @State private var showRatingSheet = false
     
     var body: some View {
@@ -41,15 +42,29 @@ struct ProfileSettingsView: View {
                     }
                 }
                 
-                // --- SECTION 2: TEST TOOLS ---
+                // --- SECTION 2: SAFETY ---
+                // ✨ NEW: Manage Blocked Users
+                Section("Privacy & Safety") {
+                    NavigationLink {
+                        BlockedUsersList()
+                    } label: {
+                        HStack {
+                            Text("Blocked Users")
+                            Spacer()
+                            Text("\(userManager.blockedUserIds.count)")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                
+                // --- SECTION 3: TEST TOOLS ---
                 Section("Developer Tools") {
-                    // This button lets you test the rating UI
                     Button("Test Rating System (Rate Myself)") {
                         showRatingSheet = true
                     }
                 }
                 
-                // --- SECTION 3: STORAGE ---
+                // --- SECTION 4: STORAGE ---
                 Section("Storage & Debug") {
                     Button(role: .destructive) {
                         showResetAlert = true
@@ -79,7 +94,6 @@ struct ProfileSettingsView: View {
                     }
                 }
             }
-            // Alert for Clearing Cache
             .alert("Clear Cache?", isPresented: $showResetAlert) {
                 Button("Cancel", role: .cancel) { }
                 Button("Clear", role: .destructive) {
@@ -89,7 +103,6 @@ struct ProfileSettingsView: View {
             } message: {
                 Text("This will delete all local temporary files and images. Your cloud data (items, messages) will remain safe.")
             }
-            // ✅ FIXED: Sheet modifier for rating
             .sheet(isPresented: $showRatingSheet) {
                 if let myId = UserManager.shared.currentUser?.id {
                     RateUserView(targetUserId: myId, targetUsername: "Myself")
@@ -98,5 +111,41 @@ struct ProfileSettingsView: View {
                 }
             }
         }
+    }
+}
+
+// ✨ NEW: Subview for managing blocks
+struct BlockedUsersList: View {
+    @ObservedObject var userManager = UserManager.shared
+    
+    var body: some View {
+        List {
+            if userManager.blockedUserIds.isEmpty {
+                Text("You haven't blocked anyone.")
+                    .foregroundStyle(.gray)
+            } else {
+                ForEach(userManager.blockedUserIds, id: \.self) { userId in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text("User ID")
+                                .font(.caption).foregroundStyle(.gray)
+                            Text(userId.uuidString.prefix(8) + "...")
+                                .font(.system(.body, design: .monospaced))
+                        }
+                        
+                        Spacer()
+                        
+                        Button("Unblock") {
+                            Task {
+                                await userManager.unblockUser(userId: userId)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.blue)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Blocked Users")
     }
 }
