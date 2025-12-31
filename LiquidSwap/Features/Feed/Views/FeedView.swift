@@ -3,26 +3,34 @@ import SwiftUI
 struct FeedView: View {
     @ObservedObject var feedManager = FeedManager.shared
     @ObservedObject var tradeManager = TradeManager.shared
-    @ObservedObject var userManager = UserManager.shared // ✨ Needed to check inventory for match logic
+    @ObservedObject var userManager = UserManager.shared
+    @ObservedObject var tabManager = TabBarManager.shared
     
     // Sheets State
     @State private var selectedDetailItem: TradeItem?
     @State private var itemForQuickOffer: TradeItem?
-    
-    // Match Animation State (Testing Trigger)
-    @State private var showMatchView = false
-    @State private var matchedItem: TradeItem?
+    @State private var selectedProfileOwnerId: UUID?
     
     // Heart Animation State
     @State private var showHeartOverlay = false
     
-    // Gesture State
-    @State private var dragOffset: CGFloat = 0
+    // Gesture State (Only Y for swipe up)
+    @State private var dragOffsetY: CGFloat = 0
+    
+    // Current top item for the info bar
+    var currentItem: TradeItem? {
+        feedManager.items.last
+    }
+    
+    // Bottom bar position: higher when tab bar visible, lower when hidden
+    var bottomBarPadding: CGFloat {
+        tabManager.isVisible ? 95 : 20
+    }
     
     var body: some View {
         NavigationStack {
             ZStack {
-                // 1. Global Background (Fallback)
+                // 1. Global Background
                 LiquidBackground().ignoresSafeArea()
                 
                 // 2. Main Content
@@ -51,9 +59,9 @@ struct FeedView: View {
                         
                         FullScreenItemCard(item: item)
                             .zIndex(isTop ? 2 : 1)
-                            .offset(y: isTop ? dragOffset : 0)
+                            .offset(y: isTop ? dragOffsetY : 0)
                             .scaleEffect(isTop ? 1.0 : 0.95)
-                            .opacity(isTop ? 1.0 : (dragOffset < -50 ? 1.0 : 0.0))
+                            .opacity(isTop ? 1.0 : (dragOffsetY < -50 ? 1.0 : 0.0))
                             
                             // --- GESTURES ---
                             .onTapGesture(count: 2) {
@@ -65,45 +73,40 @@ struct FeedView: View {
                             .gesture(
                                 isTop ? DragGesture()
                                     .onChanged { value in
+                                        // Only track vertical movement for swipe up
                                         if value.translation.height < 0 {
-                                            dragOffset = value.translation.height
+                                            dragOffsetY = value.translation.height
                                         } else {
-                                            dragOffset = value.translation.height / 5
+                                            dragOffsetY = value.translation.height / 5
                                         }
                                     }
                                     .onEnded { value in
-                                        if value.translation.height < -150 {
-                                            dismissItem(item)
+                                        let horizontalAmount = value.translation.width
+                                        let verticalAmount = value.translation.height
+                                        
+                                        // Determine primary swipe direction
+                                        if abs(horizontalAmount) > abs(verticalAmount) {
+                                            // Horizontal swipe detected
+                                            if horizontalAmount < -50 {
+                                                // SWIPE LEFT → Open Profile (no card movement)
+                                                openOwnerProfile(item: item)
+                                            } else if horizontalAmount > 50 {
+                                                // SWIPE RIGHT → Open Product Detail (no card movement)
+                                                openProductDetail(item: item)
+                                            }
+                                            // Reset any vertical offset
+                                            withAnimation(.spring()) { dragOffsetY = 0 }
                                         } else {
-                                            withAnimation(.spring()) { dragOffset = 0 }
+                                            // Vertical swipe
+                                            if verticalAmount < -150 {
+                                                // SWIPE UP → Dismiss item
+                                                dismissItem(item)
+                                            } else {
+                                                withAnimation(.spring()) { dragOffsetY = 0 }
+                                            }
                                         }
                                     } : nil
                             )
-                            
-                            // --- OVERLAYS (Quick Offer Button) ---
-                            .overlay(alignment: .bottomTrailing) {
-                                if isTop {
-                                    Button(action: { itemForQuickOffer = item }) {
-                                        ZStack {
-                                            Circle()
-                                                .fill(Color.black.opacity(0.8))
-                                                .frame(width: 56, height: 56)
-                                                .shadow(color: .cyan.opacity(0.5), radius: 10, y: 5)
-                                                .overlay(
-                                                    Circle()
-                                                        .stroke(LinearGradient(colors: [.cyan, .purple], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 2)
-                                                )
-                                            
-                                            Image(systemName: "arrow.triangle.2.circlepath")
-                                                .font(.system(size: 24, weight: .bold))
-                                                .foregroundStyle(.white)
-                                        }
-                                    }
-                                    .padding(.trailing, 20)
-                                    .padding(.bottom, 155)
-                                    .opacity(Double(1.0 - (abs(dragOffset) / 100)))
-                                }
-                            }
                     }
                 }
                 
@@ -122,7 +125,7 @@ struct FeedView: View {
                 }
                 .allowsHitTesting(false)
                 
-                // 5. Heart Animation
+                // 5. Heart Animation Overlay
                 if showHeartOverlay {
                     Image(systemName: "heart.fill")
                         .font(.system(size: 100))
@@ -132,11 +135,20 @@ struct FeedView: View {
                         .zIndex(100)
                 }
                 
-                // 6. ✨ MATCH VIEW OVERLAY (For Testing)
-                if showMatchView, let item = matchedItem {
-                    MatchView()
-                        .transition(.opacity)
-                        .zIndex(200)
+                // 6. Bottom Info Bar (Always visible, position synced with Tab Bar)
+                if let item = currentItem {
+                    VStack {
+                        Spacer()
+                        
+                        FeedBottomBar(
+                            item: item,
+                            onQuickOffer: { itemForQuickOffer = item }
+                        )
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, bottomBarPadding)
+                        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: tabManager.isVisible)
+                    }
+                    .zIndex(5)
                 }
             }
             .task {
@@ -145,61 +157,88 @@ struct FeedView: View {
                     await feedManager.fetchFeed()
                 }
             }
+            // Single Tap / Swipe Right -> Product Detail
             .sheet(item: $selectedDetailItem) { item in
                 NavigationStack {
                     ProductDetailView(item: item)
                 }
+                .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
             }
+            // Quick Offer Sheet
             .sheet(item: $itemForQuickOffer) { item in
                 QuickOfferSheet(wantedItem: item)
                     .presentationDetents([.medium, .large])
+            }
+            // Swipe Left -> Owner Profile
+            .sheet(item: $selectedProfileOwnerId) { ownerId in
+                NavigationStack {
+                    PublicProfileView(userId: ownerId)
+                }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
         }
     }
     
     // MARK: - Logic
     
+    /// Swipe UP - Skip to next item
     func dismissItem(_ item: TradeItem) {
-        withAnimation(.easeOut(duration: 0.2)) { dragOffset = -1000 }
+        withAnimation(.easeOut(duration: 0.2)) {
+            dragOffsetY = -1000
+        }
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             feedManager.removeItem(id: item.id)
-            dragOffset = 0
+            dragOffsetY = 0
         }
     }
     
+    /// Swipe LEFT - Open owner's profile
+    func openOwnerProfile(item: TradeItem) {
+        Haptics.shared.playLight()
+        selectedProfileOwnerId = item.ownerId
+    }
+    
+    /// Swipe RIGHT - Open product detail
+    func openProductDetail(item: TradeItem) {
+        Haptics.shared.playLight()
+        selectedDetailItem = item
+    }
+    
+    /// Double Tap - Like item (add to Interested) and move to next
     func handleDoubleTap(item: TradeItem) {
-        // 1. Play standard heart animation
+        // 1. Play heart animation
         withAnimation(.spring(duration: 0.3)) { showHeartOverlay = true }
         Haptics.shared.playSuccess()
         
+        // 2. Save to interested items
         Task { await tradeManager.markAsInterested(item: item) }
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+        // 3. Hide heart and dismiss item after delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             withAnimation(.easeOut(duration: 0.2)) {
                 showHeartOverlay = false
             }
-            
-            // ✨ TESTING LOGIC:
-            // Force "Match" screen to appear if user has items (simulating a mutual match)
-            if !userManager.userItems.isEmpty {
-                matchedItem = item
-                withAnimation { showMatchView = true }
-            } else {
-                // If no items, just remove card normally
-                feedManager.removeItem(id: item.id)
-            }
+            // Move to next item
+            dismissItem(item)
         }
     }
 }
 
-// MARK: - SUBVIEWS (Updated with Gamification)
+// MARK: - UUID Extension for Sheet Binding
+extension UUID: @retroactive Identifiable {
+    public var id: UUID { self }
+}
 
-struct FullScreenItemCard: View {
+// MARK: - Bottom Info Bar Component
+
+struct FeedBottomBar: View {
     let item: TradeItem
+    let onQuickOffer: () -> Void
     
-    // ✨ NEW: Gamification Logic
+    // Gamification Logic
     var rankTitle: String {
         guard let count = item.ownerTradeCount else { return "Newcomer" }
         switch count {
@@ -222,14 +261,120 @@ struct FullScreenItemCard: View {
         }
     }
     
+    var body: some View {
+        VStack(spacing: 12) {
+            // Top Row: Title + Quick Offer Button
+            HStack(alignment: .center, spacing: 12) {
+                // Item Info
+                VStack(alignment: .leading, spacing: 4) {
+                    // Title
+                    Text(item.title)
+                        .font(.headline.bold())
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    
+                    // Category + Rank Row
+                    HStack(spacing: 8) {
+                        // Category Pill
+                        Text(item.category.uppercased())
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.8))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.white.opacity(0.15))
+                            .cornerRadius(4)
+                        
+                        // Rank Pill
+                        Text(rankTitle.uppercased())
+                            .font(.system(size: 9, weight: .black))
+                            .foregroundStyle(rankColor)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(rankColor.opacity(0.15))
+                            .clipShape(Capsule())
+                    }
+                }
+                
+                Spacer()
+                
+                // Quick Offer Button
+                Button(action: onQuickOffer) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("Offer")
+                            .font(.subheadline.bold())
+                    }
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.cyan)
+                    .clipShape(Capsule())
+                }
+            }
+            
+            // Bottom Row: User + Distance
+            HStack(spacing: 8) {
+                // User Info
+                HStack(spacing: 4) {
+                    Text(item.ownerUsername ?? "User")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.8))
+                    
+                    if item.ownerIsVerified == true {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.cyan)
+                    }
+                }
+                
+                Text("•")
+                    .foregroundStyle(.white.opacity(0.4))
+                
+                // Distance
+                HStack(spacing: 4) {
+                    Image(systemName: "location.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.cyan)
+                    Text("\(String(format: "%.1f", item.distance)) km")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.8))
+                }
+                
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [.white.opacity(0.5), .white.opacity(0.1)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+        )
+        .shadow(color: .black.opacity(0.3), radius: 15, y: 8)
+    }
+}
+
+// MARK: - SUBVIEWS
+
+struct FullScreenItemCard: View {
+    let item: TradeItem
+    
     var isPremium: Bool {
         return item.ownerIsPremium ?? false
     }
     
     var body: some View {
         GeometryReader { geo in
-            ZStack(alignment: .bottomLeading) {
-                
+            ZStack {
                 // 1. Full Screen Image
                 AsyncImageView(filename: item.imageUrl)
                     .scaledToFill()
@@ -237,13 +382,13 @@ struct FullScreenItemCard: View {
                     .clipped()
                     .overlay(
                         LinearGradient(
-                            colors: [.clear, .black.opacity(0.2), .black.opacity(0.9)],
+                            colors: [.clear, .black.opacity(0.1), .black.opacity(0.6)],
                             startPoint: .center,
                             endPoint: .bottom
                         )
                     )
                 
-                // 2. ✨ PREMIUM BORDER (Visible only for Premium Users)
+                // 2. PREMIUM BORDER (Visible only for Premium Users)
                 if isPremium {
                     RoundedRectangle(cornerRadius: 0)
                         .strokeBorder(
@@ -256,68 +401,6 @@ struct FullScreenItemCard: View {
                         )
                         .ignoresSafeArea()
                 }
-                
-                // 3. Info Overlay
-                VStack(alignment: .leading, spacing: 6) {
-                    
-                    // ✨ NEW: Rank & Category Row
-                    HStack(spacing: 8) {
-                        // Category Pill
-                        Text(item.category.uppercased())
-                            .font(.system(size: 10, weight: .bold))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(6)
-                            .foregroundStyle(.white)
-                        
-                        // Rank Pill
-                        Text(rankTitle.uppercased())
-                            .font(.system(size: 9, weight: .black))
-                            .foregroundStyle(rankColor)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(rankColor.opacity(0.15))
-                            .clipShape(Capsule())
-                            .overlay(Capsule().stroke(rankColor.opacity(0.3), lineWidth: 1))
-                    }
-                    
-                    // Title
-                    Text(item.title)
-                        .font(.system(size: 32, weight: .heavy))
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                        .shadow(radius: 2)
-                    
-                    // User & Distance
-                    HStack(spacing: 6) {
-                        Image(systemName: "location.fill")
-                            .font(.caption)
-                            .foregroundStyle(.cyan)
-                        Text("\(String(format: "%.1f", item.distance)) km away")
-                            .font(.subheadline).bold()
-                            .foregroundStyle(.white.opacity(0.9))
-                        
-                        Text("•")
-                            .foregroundStyle(.white.opacity(0.5))
-                        
-                        // User Name with Verification Check
-                        HStack(spacing: 4) {
-                            Text(item.ownerUsername ?? "User")
-                                .font(.subheadline)
-                                .foregroundStyle(.white.opacity(0.8))
-                            
-                            if item.ownerIsVerified == true {
-                                Image(systemName: "checkmark.seal.fill")
-                                    .font(.caption2)
-                                    .foregroundStyle(.cyan)
-                            }
-                        }
-                    }
-                }
-                .padding(.leading, 24)
-                .padding(.trailing, 90)
-                .padding(.bottom, 145)
             }
         }
         .ignoresSafeArea()

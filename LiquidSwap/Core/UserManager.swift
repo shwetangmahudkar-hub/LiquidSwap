@@ -16,7 +16,7 @@ struct UserProfile: Codable {
     
     // Verification & Access Status
     var isVerified: Bool = false
-    var isPremium: Bool = false // Internal variable, mapped to "Early Access" in UI
+    var isPremium: Bool = false
     
     enum CodingKeys: String, CodingKey {
         case id
@@ -81,12 +81,10 @@ class UserManager: ObservableObject {
     
     // MARK: - Access Control
     
-    // ✨ LOGIC RESTORED: Now strictly checks the user profile
     var isPremium: Bool {
         return currentUser?.isPremium ?? false
     }
     
-    // Logic: Enforce 20-item limit ONLY for regular users
     var canAddItem: Bool {
         if isPremium { return true }
         return userItems.count < 20
@@ -101,7 +99,7 @@ class UserManager: ObservableObject {
         case 10...24: return "Swap Savant"
         case 25...49: return "Circular Hero"
         default: return "Legendary Trader"
-    }
+        }
     }
     
     var levelProgress: Double {
@@ -134,7 +132,7 @@ class UserManager: ObservableObject {
                     await loadUserData()
                 } else {
                     print("👤 UserManager: No session. Clearing data.")
-                    await clearData()
+                    clearData()
                 }
             }
         }
@@ -152,7 +150,10 @@ class UserManager: ObservableObject {
     // MARK: - Data Loading
     
     func loadUserData() async {
-        guard let session = try? await client.auth.session else { return }
+        guard let session = try? await client.auth.session else {
+            print("❌ UserManager: No active session")
+            return
+        }
         let userId = session.user.id
         self.isLoading = true
         
@@ -164,24 +165,8 @@ class UserManager: ObservableObject {
             async let blocked = db.fetchBlockedUsers(userId: userId)
             async let trades = db.fetchActiveTrades(userId: userId)
             
-            // Handle Profile separately as it might not exist
-            var profile: UserProfile
-            do {
-                profile = try await db.fetchProfile(userId: userId)
-            } catch {
-                print("👤 No profile found, creating default.")
-                let emailName = session.user.email?.components(separatedBy: "@").first ?? "Trader"
-                profile = UserProfile(
-                    id: userId,
-                    username: emailName,
-                    bio: "Ready to trade!",
-                    location: "Unknown",
-                    avatarUrl: nil,
-                    isoCategories: [],
-                    isPremium: false
-                )
-                try? await db.upsertProfile(profile)
-            }
+            // Handle Profile - Create if doesn't exist
+            let profile = await getOrCreateProfile(userId: userId, email: session.user.email)
             
             // Await all other results
             let (fetchedItems, fetchedRating, fetchedReviews, fetchedBlocked, fetchedTrades) = try await (items, rating, reviews, blocked, trades)
@@ -194,13 +179,54 @@ class UserManager: ObservableObject {
             self.completedTradeCount = fetchedTrades.count
             self.currentUser = profile
             
-            print("✅ User Data Loaded: \(profile.username) | Early Access: \(isPremium)")
+            print("✅ User Data Loaded: \(profile?.username ?? "Unknown") | Early Access: \(isPremium)")
             
         } catch {
             print("❌ Error loading user data: \(error)")
         }
         
         self.isLoading = false
+    }
+    
+    // MARK: - Profile Creation Helper
+    
+    /// Fetches existing profile or creates a new one if it doesn't exist
+    private func getOrCreateProfile(userId: UUID, email: String?) async -> UserProfile? {
+        // Try to fetch existing profile
+        do {
+            let existingProfile = try await db.fetchProfile(userId: userId)
+            print("✅ Profile found for user: \(existingProfile.username)")
+            return existingProfile
+        } catch {
+            print("👤 No profile found, creating new profile...")
+        }
+        
+        // Create new profile
+        let emailName = email?.components(separatedBy: "@").first ?? "Trader"
+        let newProfile = UserProfile(
+            id: userId,
+            username: emailName,
+            bio: "Ready to trade!",
+            location: "Unknown",
+            avatarUrl: nil,
+            isoCategories: [],
+            isVerified: false,
+            isPremium: false
+        )
+        
+        // Save to database with proper error handling
+        do {
+            try await db.upsertProfile(newProfile)
+            print("✅ New profile created successfully for: \(newProfile.username)")
+            return newProfile
+        } catch {
+            print("❌ CRITICAL: Failed to create profile: \(error)")
+            print("❌ Error details: \(error.localizedDescription)")
+            
+            // Still return the profile object so the app can function
+            // but the profile won't be persisted until next save
+            return newProfile
+        }
     }
     
     // MARK: - Inventory Actions
@@ -261,21 +287,64 @@ class UserManager: ObservableObject {
     // MARK: - Profile Actions
     
     func updateProfile(username: String, bio: String, location: String, isoCategories: [String]) async {
-        guard var profile = currentUser else { return }
+        // Get user ID
+        var userId: UUID?
+        if let currentId = currentUser?.id {
+            userId = currentId
+        } else if let session = try? await client.auth.session {
+            userId = session.user.id
+        }
+        
+        guard let userId = userId else {
+            print("❌ updateProfile: No user ID available")
+            return
+        }
+        
+        // If currentUser doesn't exist yet, create it
+        var profile = currentUser ?? UserProfile(
+            id: userId,
+            username: username,
+            bio: bio,
+            location: location,
+            avatarUrl: nil,
+            isoCategories: isoCategories,
+            isVerified: false,
+            isPremium: false
+        )
+        
+        // Update fields
         profile.username = username
         profile.bio = bio
         profile.location = location
         profile.isoCategories = isoCategories
+        
+        // Save locally first
         self.currentUser = profile
-        try? await db.upsertProfile(profile)
+        
+        // Save to database with error handling
+        do {
+            try await db.upsertProfile(profile)
+            print("✅ Profile updated successfully: \(username)")
+        } catch {
+            print("❌ Failed to update profile: \(error)")
+            print("❌ Error details: \(error.localizedDescription)")
+        }
     }
     
     func updateAvatar(image: UIImage) async {
-        guard var profile = currentUser else { return }
-        if let url = try? await db.uploadImage(image) {
+        guard var profile = currentUser else {
+            print("❌ updateAvatar: No current user")
+            return
+        }
+        
+        do {
+            let url = try await db.uploadImage(image)
             profile.avatarUrl = url
             self.currentUser = profile
-            try? await db.upsertProfile(profile)
+            try await db.upsertProfile(profile)
+            print("✅ Avatar updated successfully")
+        } catch {
+            print("❌ Failed to update avatar: \(error)")
         }
     }
     
@@ -283,19 +352,27 @@ class UserManager: ObservableObject {
         guard var profile = currentUser else { return }
         profile.isPremium = true
         self.currentUser = profile
-        try? await db.upsertProfile(profile)
-        print("🎉 User upgraded to Early Access!")
+        
+        do {
+            try await db.upsertProfile(profile)
+            print("🎉 User upgraded to Early Access!")
+        } catch {
+            print("❌ Failed to upgrade to premium: \(error)")
+        }
     }
     
-    // ✨ NEW: Dev Tool for Testing
     func debugTogglePremium() {
         guard var profile = currentUser else { return }
         profile.isPremium.toggle()
         self.currentUser = profile
         
         Task {
-            try? await db.upsertProfile(profile)
-            print("🔧 Dev Mode: Access is now \(profile.isPremium)")
+            do {
+                try await db.upsertProfile(profile)
+                print("🔧 Dev Mode: Access is now \(profile.isPremium)")
+            } catch {
+                print("❌ Failed to toggle premium: \(error)")
+            }
         }
     }
     
@@ -303,13 +380,67 @@ class UserManager: ObservableObject {
         guard var profile = currentUser else { return }
         profile.isVerified = true
         self.currentUser = profile
-        try? await db.upsertProfile(profile)
+        
+        do {
+            try await db.upsertProfile(profile)
+            print("✅ User marked as verified")
+        } catch {
+            print("❌ Failed to mark as verified: \(error)")
+        }
     }
     
     func completeOnboarding(username: String, bio: String, image: UIImage?) async {
-        await updateProfile(username: username, bio: bio, location: "Unknown", isoCategories: [])
+        print("🚀 Starting onboarding completion for: \(username)")
+        
+        // Get user ID from currentUser or session
+        var userId: UUID?
+        if let currentId = currentUser?.id {
+            userId = currentId
+        } else if let session = try? await client.auth.session {
+            userId = session.user.id
+        }
+        
+        guard let userId = userId else {
+            print("❌ completeOnboarding: No user ID available")
+            return
+        }
+        
+        // Create or update profile
+        var profile = currentUser ?? UserProfile(
+            id: userId,
+            username: username,
+            bio: bio,
+            location: "Unknown",
+            avatarUrl: nil,
+            isoCategories: [],
+            isVerified: false,
+            isPremium: false
+        )
+        
+        profile.username = username
+        profile.bio = bio
+        
+        // Upload avatar if provided
         if let img = image {
-            await updateAvatar(image: img)
+            do {
+                let url = try await db.uploadImage(img)
+                profile.avatarUrl = url
+                print("✅ Avatar uploaded: \(url)")
+            } catch {
+                print("❌ Failed to upload avatar: \(error)")
+            }
+        }
+        
+        // Save profile to database
+        do {
+            try await db.upsertProfile(profile)
+            self.currentUser = profile
+            print("✅ Onboarding complete! Profile saved for: \(username)")
+        } catch {
+            print("❌ CRITICAL: Failed to save profile during onboarding: \(error)")
+            print("❌ Error details: \(error.localizedDescription)")
+            // Still set locally so app can function
+            self.currentUser = profile
         }
     }
     
