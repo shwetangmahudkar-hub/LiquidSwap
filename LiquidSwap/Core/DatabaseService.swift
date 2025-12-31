@@ -13,16 +13,18 @@ class DatabaseService {
     // MARK: - ITEM ACTIONS
     
     func uploadImage(_ image: UIImage) async throws -> String {
+        // 📉 COST OPTIMIZATION (Part B): Compress before upload
         guard let data = image.prepareForUpload() else {
             throw URLError(.badURL)
         }
         
         let filename = "\(UUID().uuidString).jpg"
         
+        // ✨ FIX: Changed cacheControl from "3600" (1 hour) to "31536000" (1 year)
         _ = try await client.storage.from("images").upload(
             filename,
             data: data,
-            options: FileOptions(cacheControl: "3600", contentType: "image/jpeg", upsert: false)
+            options: FileOptions(cacheControl: "31536000", contentType: "image/jpeg", upsert: false)
         )
         
         return try client.storage.from("images").getPublicURL(path: filename).absoluteString
@@ -46,8 +48,19 @@ class DatabaseService {
         return try await client.from("items").select().eq("owner_id", value: userId).order("created_at", ascending: false).execute().value
     }
     
-    func fetchFeedItems(currentUserId: UUID) async throws -> [TradeItem] {
-        return try await client.from("items").select().neq("owner_id", value: currentUserId).order("created_at", ascending: false).execute().value
+    // 📉 COST OPTIMIZATION (Part C): Pagination
+    func fetchFeedItems(currentUserId: UUID, page: Int, pageSize: Int) async throws -> [TradeItem] {
+        let from = page * pageSize
+        let to = from + pageSize - 1
+        
+        return try await client
+            .from("items")
+            .select()
+            .neq("owner_id", value: currentUserId)
+            .order("created_at", ascending: false)
+            .range(from: from, to: to)
+            .execute()
+            .value
     }
     
     func fetchItem(id: UUID) async throws -> TradeItem {
@@ -89,37 +102,32 @@ class DatabaseService {
     func fetchActivityEvents(for userId: UUID) async throws -> [ActivityEvent] {
         // 1. Get My Items
         let myItems = try await fetchUserItems(userId: userId)
-        if myItems.isEmpty {
-            print("🔍 Activity Debug: User has no items.")
-            return []
-        }
+        if myItems.isEmpty { return [] }
         
         let myItemMap = Dictionary(uniqueKeysWithValues: myItems.map { ($0.id, $0) })
         let myItemIds = myItems.map { $0.id }
         
-        print("🔍 Activity Debug: Checking likes for \(myItemIds.count) items...")
-        
         // 2. Find who liked them
+        // ✨ FIX: Decode date as String? to avoid iOS 16 decoding crash
         struct RawLike: Decodable {
             let userId: UUID
             let itemId: UUID
-            let createdAt: Date?
+            let createdAtString: String? // Changed from Date? to String?
+            
             enum CodingKeys: String, CodingKey {
                 case userId = "user_id"
                 case itemId = "item_id"
-                case createdAt = "created_at"
+                case createdAtString = "created_at"
             }
         }
         
         let interests: [RawLike] = try await client
             .from("likes")
             .select("user_id, item_id, created_at")
-            .in("item_id", value: myItemIds)
+            .in("item_id", values: myItemIds)
             .order("created_at", ascending: false)
             .execute()
             .value
-        
-        print("🔍 Activity Debug: Found \(interests.count) raw likes.")
         
         // 3. Hydrate (Fetch Profiles of Likers)
         var events: [ActivityEvent] = []
@@ -134,15 +142,27 @@ class DatabaseService {
             }
         }
         
+        // Helper formatter for manual parsing
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        
         for interest in interests {
             if let item = myItemMap[interest.itemId],
                let actor = profileMap[interest.userId] {
                 
                 if actor.id != userId {
+                    // Manual Date Parsing
+                    let date: Date
+                    if let dateString = interest.createdAtString {
+                        date = formatter.date(from: dateString) ?? Date()
+                    } else {
+                        date = Date()
+                    }
+                    
                     let event = ActivityEvent(
                         actor: actor,
                         item: item,
-                        createdAt: interest.createdAt ?? Date(),
+                        createdAt: date,
                         status: .pending
                     )
                     events.append(event)
@@ -236,9 +256,6 @@ class DatabaseService {
     }
     
     func reportUser(reporterId: UUID, reportedId: UUID, reason: String) async throws {
-         // Re-using the same reports table but we might need a null item_id or a specific user report structure.
-         // For MVP, we will assume we add a 'reported_user_id' column or just log it.
-         // We'll stick to blocking for immediate safety, but here is a placeholder.
          print("User reported: \(reportedId)")
     }
 

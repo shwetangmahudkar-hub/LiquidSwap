@@ -12,7 +12,6 @@ class TradeManager: ObservableObject {
     @Published var activeTrades: [TradeOffer] = []
     @Published var isLoading = false
     
-    // Error Handling Properties
     @Published var errorMessage: String?
     @Published var showError = false
     
@@ -20,24 +19,11 @@ class TradeManager: ObservableObject {
     private let userManager = UserManager.shared
     private let client = SupabaseConfig.client
     
-    // Realtime reference
     private var channel: RealtimeChannelV2?
     private var realtimeTask: Task<Void, Never>?
     
     private init() {
         Task { await subscribeToRealtime() }
-    }
-    
-    // MARK: - Error Handling
-    private func handleError(_ error: Error, context: String) {
-        print("🟥 [TradeManager Error] \(context): \(error.localizedDescription)")
-        self.errorMessage = "Failed to \(context). Please try again."
-        self.showError = true
-    }
-    
-    func clearError() {
-        self.errorMessage = nil
-        self.showError = false
     }
     
     // MARK: - Data Loading
@@ -46,42 +32,27 @@ class TradeManager: ObservableObject {
         self.isLoading = true
         defer { self.isLoading = false }
         
-        // ✨ NEW: Get the current block list
         let blockedIDs = userManager.blockedUserIds
         
         do {
-            // Run all fetches in parallel
             async let interestedResult = loadInterestedItems(userId: userId)
             async let offersResult = loadIncomingOffers(userId: userId)
             async let activeResult = loadActiveTrades(userId: userId)
             
             let (interested, rawOffers, rawActive) = try await (interestedResult, offersResult, activeResult)
             
-            // ✨ FILTER: Incoming Offers
-            // Remove offers sent by blocked users
-            let filteredOffers = rawOffers.filter { offer in
-                !blockedIDs.contains(offer.senderId)
-            }
-            
-            // ✨ FILTER: Active Trades
-            // Remove trades where the partner is blocked
+            let filteredOffers = rawOffers.filter { !blockedIDs.contains($0.senderId) }
             let filteredActive = rawActive.filter { trade in
                 let partnerId = (trade.senderId == userId) ? trade.receiverId : trade.senderId
                 return !blockedIDs.contains(partnerId)
             }
             
-            // Hydrate (Fetch Item Details) only for the visible trades
             self.interestedItems = interested
             self.incomingOffers = await hydrateTrades(filteredOffers)
             self.activeTrades = await hydrateTrades(filteredActive)
             
-            print("✅ Loaded: \(interested.count) likes, \(self.incomingOffers.count) offers, \(self.activeTrades.count) chats")
-            if !blockedIDs.isEmpty {
-                print("🚫 Blocked: Hidden \(rawOffers.count - self.incomingOffers.count) offers and \(rawActive.count - self.activeTrades.count) chats.")
-            }
-            
         } catch {
-            handleError(error, context: "load trades data")
+            print("Error loading trades: \(error)")
         }
     }
     
@@ -91,38 +62,54 @@ class TradeManager: ObservableObject {
     }
     
     private func loadIncomingOffers(userId: UUID) async throws -> [TradeOffer] {
-        // Return raw offers, we hydrate later
         return try await db.fetchIncomingOffers(userId: userId)
     }
     
     private func loadActiveTrades(userId: UUID) async throws -> [TradeOffer] {
-        // Return raw trades, we hydrate later
         return try await db.fetchActiveTrades(userId: userId)
     }
     
-    // Hydrate Trade Objects with full Item Details
+    // MARK: - Hydration Logic
     private func hydrateTrades(_ trades: [TradeOffer]) async -> [TradeOffer] {
         var result = trades
-        
-        await withTaskGroup(of: (Int, TradeItem?, TradeItem?).self) { group in
+        await withTaskGroup(of: (Int, TradeOffer).self) { group in
             for (index, trade) in trades.enumerated() {
                 group.addTask {
-                    // We use try? here so it returns nil instead of throwing
+                    var hydratedTrade = trade
                     async let offered = try? await self.db.fetchItem(id: trade.offeredItemId)
                     async let wanted = try? await self.db.fetchItem(id: trade.wantedItemId)
                     let (offeredItem, wantedItem) = await (offered, wanted)
-                    return (index, offeredItem, wantedItem)
+                    hydratedTrade.offeredItem = offeredItem
+                    hydratedTrade.wantedItem = wantedItem
+                    
+                    if !trade.additionalOfferedItemIds.isEmpty {
+                        hydratedTrade.additionalOfferedItems = await self.fetchItems(ids: trade.additionalOfferedItemIds)
+                    }
+                    if !trade.additionalWantedItemIds.isEmpty {
+                        hydratedTrade.additionalWantedItems = await self.fetchItems(ids: trade.additionalWantedItemIds)
+                    }
+                    return (index, hydratedTrade)
                 }
             }
-            
-            for await (index, offeredItem, wantedItem) in group {
-                if index < result.count {
-                    result[index].offeredItem = offeredItem
-                    result[index].wantedItem = wantedItem
-                }
+            for await (index, hydratedTrade) in group {
+                if index < result.count { result[index] = hydratedTrade }
             }
         }
         return result
+    }
+    
+    nonisolated private func fetchItems(ids: [UUID]) async -> [TradeItem] {
+        if ids.isEmpty { return [] }
+        var items: [TradeItem] = []
+        await withTaskGroup(of: TradeItem?.self) { group in
+            for id in ids {
+                group.addTask { return try? await DatabaseService.shared.fetchItem(id: id) }
+            }
+            for await item in group {
+                if let item = item { items.append(item) }
+            }
+        }
+        return items
     }
     
     // MARK: - Realtime
@@ -136,7 +123,6 @@ class TradeManager: ObservableObject {
         
         do {
             try await newChannel.subscribeWithError()
-            print("✅ Subscribed to real-time trade updates")
         } catch { return }
         
         realtimeTask = Task { [weak self] in
@@ -147,7 +133,6 @@ class TradeManager: ObservableObject {
     }
     
     // MARK: - Actions
-    
     func markAsInterested(item: TradeItem) async -> Bool {
         guard let userId = userManager.currentUser?.id else { return false }
         do {
@@ -173,20 +158,63 @@ class TradeManager: ObservableObject {
         } catch { return false }
     }
 
-    func sendOffer(wantedItem: TradeItem, myItem: TradeItem) async -> Bool {
-        guard let senderId = userManager.currentUser?.id else { return false }
-        if myItem.ownerId != senderId || wantedItem.ownerId == senderId { return false }
-        
-        if await checkIfOfferExists(wantedItemId: wantedItem.id, myItemId: myItem.id) { return false }
-        
-        let offer = TradeOffer(id: UUID(), senderId: senderId, receiverId: wantedItem.ownerId, offeredItemId: myItem.id, wantedItemId: wantedItem.id, status: "pending", createdAt: Date())
+    func hasPendingOffer(for wantedItemId: UUID) async -> Bool {
+        guard let myId = userManager.currentUser?.id else { return false }
         do {
-            // 1. Create Trade
+            let count = try await client.from("trades").select("id", head: true, count: .exact).eq("sender_id", value: myId).eq("wanted_item_id", value: wantedItemId).eq("status", value: "pending").execute().count
+            return (count ?? 0) > 0
+        } catch { return false }
+    }
+    
+    // ✨ FIX: Removed unused variable warning
+    func sendInquiry(wantedItem: TradeItem) async -> Bool {
+        // 1. Check if we already have an open trade for this item
+        if await hasPendingOffer(for: wantedItem.id) {
+            print("ℹ️ Trade already exists, skipping creation.")
+            return true
+        }
+        
+        // 2. Select a "Placeholder" Item from my inventory
+        guard let placeholderItem = userManager.userItems.first else {
+            print("❌ sendInquiry Failed: User has no items to trade.")
+            return false
+        }
+        
+        // 3. Create the Trade Offer
+        return await sendOffer(wantedItem: wantedItem, myItem: placeholderItem)
+    }
+
+    func sendOffer(wantedItem: TradeItem, myItem: TradeItem) async -> Bool {
+        return await sendMultiItemOffer(wantedItems: [wantedItem], offeredItems: [myItem])
+    }
+    
+    func sendMultiItemOffer(wantedItems: [TradeItem], offeredItems: [TradeItem]) async -> Bool {
+        guard let senderId = userManager.currentUser?.id else { return false }
+        guard let primaryOffered = offeredItems.first, let primaryWanted = wantedItems.first else { return false }
+        
+        if primaryOffered.ownerId != senderId { return false }
+        if primaryWanted.ownerId == senderId { return false }
+        if await checkIfOfferExists(wantedItemId: primaryWanted.id, myItemId: primaryOffered.id) { return false }
+        
+        let additionalOfferedIds = offeredItems.dropFirst().map { $0.id }
+        let additionalWantedIds = wantedItems.dropFirst().map { $0.id }
+        
+        let offer = TradeOffer(
+            id: UUID(),
+            senderId: senderId,
+            receiverId: primaryWanted.ownerId,
+            offeredItemId: primaryOffered.id,
+            wantedItemId: primaryWanted.id,
+            additionalOfferedItemIds: additionalOfferedIds,
+            additionalWantedItemIds: additionalWantedIds,
+            status: "pending",
+            createdAt: Date()
+        )
+        
+        do {
             try await db.createTradeOffer(offer: offer)
-            // 2. Auto-Like for Activity Hub
-            try? await db.saveLike(userId: senderId, itemId: wantedItem.id)
-            
-            interestedItems.removeAll { $0.id == wantedItem.id }
+            try? await db.saveLike(userId: senderId, itemId: primaryWanted.id)
+            interestedItems.removeAll { $0.id == primaryWanted.id }
             return true
         } catch { return false }
     }
@@ -216,25 +244,30 @@ class TradeManager: ObservableObject {
         do {
             let response: [TradeOffer] = try await client.from("trades").select().in("status", values: ["accepted", "pending", "completed"]).or("and(sender_id.eq.\(myId),receiver_id.eq.\(partnerId)),and(sender_id.eq.\(partnerId),receiver_id.eq.\(myId))").order("created_at", ascending: false).limit(1).execute().value
             guard let tradeStub = response.first else { return nil }
+            
             async let offered = try? await self.db.fetchItem(id: tradeStub.offeredItemId)
             async let wanted = try? await self.db.fetchItem(id: tradeStub.wantedItemId)
             let (offeredItem, wantedItem) = await (offered, wanted)
+            
             var fullTrade = tradeStub
             fullTrade.offeredItem = offeredItem
             fullTrade.wantedItem = wantedItem
+            
+            if !fullTrade.additionalOfferedItemIds.isEmpty {
+                fullTrade.additionalOfferedItems = await self.fetchItems(ids: fullTrade.additionalOfferedItemIds)
+            }
+            if !fullTrade.additionalWantedItemIds.isEmpty {
+                fullTrade.additionalWantedItems = await self.fetchItems(ids: fullTrade.additionalWantedItemIds)
+            }
             return fullTrade
         } catch { return nil }
     }
     
-    // MARK: - Counter Offer Logic
-    
     func sendCounterOffer(originalTrade: TradeOffer, newWantedItem: TradeItem) async -> Bool {
         guard let myId = userManager.currentUser?.id else { return false }
-        
         guard originalTrade.receiverId == myId else { return false }
         
         let myItemId = originalTrade.wantedItemId
-        
         let newOffer = TradeOffer(
             id: UUID(),
             senderId: myId,
@@ -244,19 +277,12 @@ class TradeManager: ObservableObject {
             status: "pending",
             createdAt: Date()
         )
-        
         do {
             try await db.updateTradeStatus(tradeId: originalTrade.id, status: "countered")
             try await db.createTradeOffer(offer: newOffer)
             try? await db.saveLike(userId: myId, itemId: newWantedItem.id)
-            
-            if let index = incomingOffers.firstIndex(where: { $0.id == originalTrade.id }) {
-                incomingOffers.remove(at: index)
-            }
+            if let index = incomingOffers.firstIndex(where: { $0.id == originalTrade.id }) { incomingOffers.remove(at: index) }
             return true
-        } catch {
-            print("❌ Counter Offer Failed: \(error)")
-            return false
-        }
+        } catch { return false }
     }
 }

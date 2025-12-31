@@ -31,6 +31,28 @@ struct SwipeableCard: View {
             LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .center, endPoint: .bottom)
                 .cornerRadius(20)
             
+            // ✨ NEW: Donation/Free Badge
+            if item.isDonation {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Text("FREE")
+                            .font(.headline)
+                            .fontWeight(.heavy)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(Color.green) // Matches the "Post Donation" button
+                                    .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
+                            )
+                            .padding(16)
+                    }
+                    Spacer()
+                }
+            }
+            
             // Text Info
             VStack(alignment: .leading) {
                 Spacer()

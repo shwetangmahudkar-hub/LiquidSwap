@@ -7,19 +7,23 @@ class TabBarManager: ObservableObject {
     @Published var isVisible: Bool
     
     private init() {
-        // ✅ Initialize property explicitly here to stop the error
+        // ✅ Initialize property explicitly here
         self.isVisible = true
     }
     
     func show() {
-        withAnimation(.spring()) {
+        // ✨ SLOWER ANIMATION: Increased response to 0.8 (was default ~0.55)
+        // This makes the slide up feels heavier and slower.
+        withAnimation(.spring(response: 0.8, dampingFraction: 0.8)) {
             isVisible = true
         }
     }
     
     func hide() {
-        withAnimation(.easeOut(duration: 0.2)) {
+        // ✨ MATCHING SLOWER ANIMATION
+        withAnimation(.spring(response: 0.8, dampingFraction: 0.8)) {
             isVisible = false
         }
     }
 }
+

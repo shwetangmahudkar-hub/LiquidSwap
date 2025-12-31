@@ -14,8 +14,9 @@ struct UserProfile: Codable {
     var avatarUrl: String?
     var isoCategories: [String] = []
     
-    // Verification Status
+    // Verification & Access Status
     var isVerified: Bool = false
+    var isPremium: Bool = false // Internal variable, mapped to "Early Access" in UI
     
     enum CodingKeys: String, CodingKey {
         case id
@@ -25,9 +26,10 @@ struct UserProfile: Codable {
         case avatarUrl = "avatar_url"
         case isoCategories = "iso_categories"
         case isVerified = "is_verified"
+        case isPremium = "is_premium"
     }
     
-    // Fallback init for decoding if column is missing (Backward Compatibility)
+    // Fallback init for decoding
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -37,10 +39,11 @@ struct UserProfile: Codable {
         avatarUrl = try container.decodeIfPresent(String.self, forKey: .avatarUrl)
         isoCategories = try container.decodeIfPresent([String].self, forKey: .isoCategories) ?? []
         isVerified = try container.decodeIfPresent(Bool.self, forKey: .isVerified) ?? false
+        isPremium = try container.decodeIfPresent(Bool.self, forKey: .isPremium) ?? false
     }
     
     // Explicit Init
-    init(id: UUID, username: String, bio: String, location: String, avatarUrl: String?, isoCategories: [String], isVerified: Bool = false) {
+    init(id: UUID, username: String, bio: String, location: String, avatarUrl: String?, isoCategories: [String], isVerified: Bool = false, isPremium: Bool = false) {
         self.id = id
         self.username = username
         self.bio = bio
@@ -48,6 +51,7 @@ struct UserProfile: Codable {
         self.avatarUrl = avatarUrl
         self.isoCategories = isoCategories
         self.isVerified = isVerified
+        self.isPremium = isPremium
     }
 }
 
@@ -64,6 +68,7 @@ class UserManager: ObservableObject {
     // Rating Stats
     @Published var userRating: Double = 0.0
     @Published var userReviewCount: Int = 0
+    @Published var completedTradeCount: Int = 0
     
     @Published var isLoading = false
     
@@ -74,9 +79,45 @@ class UserManager: ObservableObject {
     private let db = DatabaseService.shared
     private let client = SupabaseConfig.client
     
-    // Logic: Enforce 5-item limit
+    // MARK: - Access Control
+    
+    // ✨ LOGIC RESTORED: Now strictly checks the user profile
+    var isPremium: Bool {
+        return currentUser?.isPremium ?? false
+    }
+    
+    // Logic: Enforce 20-item limit ONLY for regular users
     var canAddItem: Bool {
-        return userItems.count < 5
+        if isPremium { return true }
+        return userItems.count < 20
+    }
+    
+    // MARK: - Gamification Computed Properties
+    
+    var currentLevelTitle: String {
+        switch completedTradeCount {
+        case 0...2: return "Novice Swapper"
+        case 3...9: return "Eco Trader"
+        case 10...24: return "Swap Savant"
+        case 25...49: return "Circular Hero"
+        default: return "Legendary Trader"
+    }
+    }
+    
+    var levelProgress: Double {
+        let count = Double(completedTradeCount)
+        switch completedTradeCount {
+        case 0...2: return count / 3.0
+        case 3...9: return (count - 3) / 7.0
+        case 10...24: return (count - 10) / 15.0
+        case 25...49: return (count - 25) / 25.0
+        default: return 1.0
+        }
+    }
+    
+    var carbonSaved: String {
+        let kg = Double(completedTradeCount) * 2.5
+        return String(format: "%.1f kg", kg)
     }
     
     private init() {
@@ -104,7 +145,8 @@ class UserManager: ObservableObject {
         self.userItems = []
         self.userRating = 0.0
         self.userReviewCount = 0
-        self.blockedUserIds = [] // Clear blocks
+        self.completedTradeCount = 0
+        self.blockedUserIds = []
     }
     
     // MARK: - Data Loading
@@ -115,17 +157,14 @@ class UserManager: ObservableObject {
         self.isLoading = true
         
         do {
-            // 1. Fetch User's Items (Inventory)
-            async let itemsTask = db.fetchUserItems(userId: userId)
+            // Fetch everything concurrently
+            async let items = db.fetchUserItems(userId: userId)
+            async let rating = db.fetchUserRating(userId: userId)
+            async let reviews = db.fetchReviewCount(userId: userId)
+            async let blocked = db.fetchBlockedUsers(userId: userId)
+            async let trades = db.fetchActiveTrades(userId: userId)
             
-            // 2. Fetch Rating Stats in Parallel
-            async let ratingTask = db.fetchUserRating(userId: userId)
-            async let countTask = db.fetchReviewCount(userId: userId)
-            
-            // 3. Fetch Blocked Users
-            async let blockedTask = db.fetchBlockedUsers(userId: userId)
-            
-            // 4. Fetch User's Profile
+            // Handle Profile separately as it might not exist
             var profile: UserProfile
             do {
                 profile = try await db.fetchProfile(userId: userId)
@@ -138,19 +177,24 @@ class UserManager: ObservableObject {
                     bio: "Ready to trade!",
                     location: "Unknown",
                     avatarUrl: nil,
-                    isoCategories: []
+                    isoCategories: [],
+                    isPremium: false
                 )
                 try? await db.upsertProfile(profile)
             }
             
-            // 5. Await all data
-            self.userItems = try await itemsTask
-            self.userRating = try await ratingTask
-            self.userReviewCount = try await countTask
-            self.blockedUserIds = try await blockedTask
+            // Await all other results
+            let (fetchedItems, fetchedRating, fetchedReviews, fetchedBlocked, fetchedTrades) = try await (items, rating, reviews, blocked, trades)
+            
+            // Update state
+            self.userItems = fetchedItems
+            self.userRating = fetchedRating
+            self.userReviewCount = fetchedReviews
+            self.blockedUserIds = fetchedBlocked
+            self.completedTradeCount = fetchedTrades.count
             self.currentUser = profile
             
-            print("✅ User Data Loaded: \(profile.username) (Rating: \(self.userRating), Blocked: \(self.blockedUserIds.count))")
+            print("✅ User Data Loaded: \(profile.username) | Early Access: \(isPremium)")
             
         } catch {
             print("❌ Error loading user data: \(error)")
@@ -171,7 +215,6 @@ class UserManager: ObservableObject {
         
         guard let userId = currentUser?.id else { return }
         
-        // Use custom coords (fuzzed) if provided, otherwise fall back to raw location
         let location = LocationManager.shared.userLocation
         let finalLat = customLat ?? location?.coordinate.latitude
         let finalLon = customLon ?? location?.coordinate.longitude
@@ -236,6 +279,26 @@ class UserManager: ObservableObject {
         }
     }
     
+    func upgradeToPremium() async {
+        guard var profile = currentUser else { return }
+        profile.isPremium = true
+        self.currentUser = profile
+        try? await db.upsertProfile(profile)
+        print("🎉 User upgraded to Early Access!")
+    }
+    
+    // ✨ NEW: Dev Tool for Testing
+    func debugTogglePremium() {
+        guard var profile = currentUser else { return }
+        profile.isPremium.toggle()
+        self.currentUser = profile
+        
+        Task {
+            try? await db.upsertProfile(profile)
+            print("🔧 Dev Mode: Access is now \(profile.isPremium)")
+        }
+    }
+    
     func markAsVerified() async {
         guard var profile = currentUser else { return }
         profile.isVerified = true
@@ -254,46 +317,23 @@ class UserManager: ObservableObject {
     
     func blockUser(userId: UUID) async {
         guard let myId = currentUser?.id else { return }
-        
-        // Optimistic Update
-        if !blockedUserIds.contains(userId) {
-            blockedUserIds.append(userId)
-        }
+        if !blockedUserIds.contains(userId) { blockedUserIds.append(userId) }
         
         do {
             try await db.blockUser(blockerId: myId, blockedId: userId)
-            print("✅ Blocked user \(userId)")
-            
-            // Post-Block Cleanup: Force Feed & Trades to refresh
-            // NOTE: This 'await' is now valid because FeedManager.fetchFeed is async
             await FeedManager.shared.fetchFeed()
-            
-            // If you have a TradeManager, refresh it too (commented out if not available yet)
-            // await TradeManager.shared.loadTradesData()
-            
         } catch {
-            print("❌ Failed to block: \(error)")
-            // Revert
-            if let index = blockedUserIds.firstIndex(of: userId) {
-                blockedUserIds.remove(at: index)
-            }
+            if let index = blockedUserIds.firstIndex(of: userId) { blockedUserIds.remove(at: index) }
         }
     }
     
     func unblockUser(userId: UUID) async {
         guard let myId = currentUser?.id else { return }
-        
-        // Optimistic Update
-        if let index = blockedUserIds.firstIndex(of: userId) {
-            blockedUserIds.remove(at: index)
-        }
+        if let index = blockedUserIds.firstIndex(of: userId) { blockedUserIds.remove(at: index) }
         
         do {
             try await db.unblockUser(blockerId: myId, blockedId: userId)
-            print("✅ Unblocked user \(userId)")
         } catch {
-            print("❌ Failed to unblock: \(error)")
-            // Revert
             blockedUserIds.append(userId)
         }
     }

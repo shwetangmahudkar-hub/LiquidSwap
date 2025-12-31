@@ -6,11 +6,11 @@ class AuthViewModel: ObservableObject {
     @Published var session: Session?
     @Published var isAuthenticated = false
     @Published var isLoading = false
-    @Published var errorMessage: String? // Kept for compat, but unused
+    @Published var errorMessage: String?
     @Published var email = ""
     @Published var password = ""
     
-    // FIXED: Use the shared client from SupabaseConfig
+    // Use the shared client from SupabaseConfig
     private let client = SupabaseConfig.client
     
     init() {
@@ -20,7 +20,7 @@ class AuthViewModel: ObservableObject {
     func setupAuthListener() {
         Task {
             for await state in client.auth.authStateChanges {
-                DispatchQueue.main.async {
+                await MainActor.run {
                     self.session = state.session
                     self.isAuthenticated = (state.session != nil)
                     print("🔄 Auth State Changed: \(self.isAuthenticated ? "Logged In" : "Logged Out")")
@@ -32,7 +32,7 @@ class AuthViewModel: ObservableObject {
     // MARK: - Actions
     
     func signIn() async {
-        DispatchQueue.main.async {
+        await MainActor.run {
             self.isLoading = true
             self.errorMessage = nil
         }
@@ -40,20 +40,19 @@ class AuthViewModel: ObservableObject {
         do {
             let session = try await client.auth.signIn(email: email, password: password)
             print("✅ Login Successful: \(session.user.email ?? "No Email")")
+            await MainActor.run { self.isLoading = false }
         } catch {
-            // CONSOLE LOGGING
             print("🟥 LOGIN ERROR: \(error.localizedDescription)")
-            print("   -> Details: \(error)")
             
-            DispatchQueue.main.async {
-                // self.errorMessage = error.localizedDescription // UI Alert Disabled
+            await MainActor.run {
+                self.errorMessage = "Login failed. Please check your credentials."
                 self.isLoading = false
             }
         }
     }
     
     func signUp() async {
-        DispatchQueue.main.async {
+        await MainActor.run {
             self.isLoading = true
             self.errorMessage = nil
         }
@@ -61,13 +60,18 @@ class AuthViewModel: ObservableObject {
         do {
             let session = try await client.auth.signUp(email: email, password: password)
             print("✅ Sign Up Successful: \(session.user.email ?? "No Email")")
+            await MainActor.run { self.isLoading = false }
         } catch {
-            // CONSOLE LOGGING
-            print("🟥 SIGN UP ERROR: \(error.localizedDescription)")
-            print("   -> Details: \(error)")
+            print("🟥 SIGN UP ERROR: \(error)")
             
-            DispatchQueue.main.async {
-                // self.errorMessage = error.localizedDescription // UI Alert Disabled
+            await MainActor.run {
+                // Better Error Handling
+                let errorString = String(describing: error)
+                if errorString.contains("user_already_exists") || error.localizedDescription.contains("registered") {
+                    self.errorMessage = "Account already exists. Please switch to Log In."
+                } else {
+                    self.errorMessage = "Sign up failed: \(error.localizedDescription)"
+                }
                 self.isLoading = false
             }
         }
@@ -77,6 +81,10 @@ class AuthViewModel: ObservableObject {
         do {
             try await client.auth.signOut()
             print("👋 Signed Out")
+            await MainActor.run {
+                self.isAuthenticated = false
+                self.session = nil
+            }
         } catch {
             print("🟥 Sign Out Error: \(error)")
         }

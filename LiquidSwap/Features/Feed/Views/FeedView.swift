@@ -1,387 +1,326 @@
 import SwiftUI
 
-// Ensure SwipeDirection is defined
-enum CardSwipeDirection {
-    case left
-    case right
-}
-
-// Wrapper to make UUID identifiable for Sheet presentation
-struct ProfileDestination: Identifiable {
-    let id: UUID
-}
-
 struct FeedView: View {
-    // FIX: Use shared instance instead of creating a new one
     @ObservedObject var feedManager = FeedManager.shared
     @ObservedObject var tradeManager = TradeManager.shared
+    @ObservedObject var userManager = UserManager.shared // ✨ Needed to check inventory for match logic
     
-    // State for Detail View Navigation
+    // Sheets State
     @State private var selectedDetailItem: TradeItem?
+    @State private var itemForQuickOffer: TradeItem?
     
-    // State for Public Profile Sheet
-    @State private var selectedProfile: ProfileDestination?
+    // Match Animation State (Testing Trigger)
+    @State private var showMatchView = false
+    @State private var matchedItem: TradeItem?
     
-    // State to track the last swipe direction for button animations
-    @State private var lastSwipeDirection: CardSwipeDirection = .left
+    // Heart Animation State
+    @State private var showHeartOverlay = false
+    
+    // Gesture State
+    @State private var dragOffset: CGFloat = 0
     
     var body: some View {
         NavigationStack {
             ZStack {
-                // 1. Theme Background
-                LiquidBackground()
+                // 1. Global Background (Fallback)
+                LiquidBackground().ignoresSafeArea()
                 
-                VStack(spacing: 0) {
-                    // --- HEADER ---
-                    HStack {
-                        Image(systemName: "flame.fill")
+                // 2. Main Content
+                if feedManager.isLoading && feedManager.items.isEmpty {
+                    ProgressView().tint(.white)
+                } else if feedManager.items.isEmpty {
+                    // Empty State
+                    VStack(spacing: 20) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 80))
                             .foregroundStyle(.cyan)
-                            .font(.title2)
-                        Text("LiquidSwap")
+                            .shadow(radius: 10)
+                        Text("You're all caught up!")
                             .font(.title2).bold()
                             .foregroundStyle(.white)
-                        
-                        Spacer()
+                        Button("Refresh Feed") {
+                            Task { await feedManager.fetchFeed() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.white.opacity(0.2))
                     }
-                    .padding()
-                    .background(.ultraThinMaterial)
-                    .zIndex(10) // Keep header on top
-                    
-                    // --- CARD STACK VIEW ---
-                    GeometryReader { geometry in
-                        // Width: Old (-38) -> New (-48) [5pt narrower each side]
-                        let cardHeight = geometry.size.height - 54
-                        let cardWidth = geometry.size.width - 48
+                } else {
+                    // 3. Card Stack
+                    ForEach(feedManager.items.suffix(2)) { item in
+                        let isTop = feedManager.items.last?.id == item.id
                         
-                        ZStack {
-                            if feedManager.isLoading {
-                                ProgressView().tint(.cyan)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            } else if feedManager.items.isEmpty {
-                                EmptyFeedState(feedManager: feedManager)
-                                    .frame(width: geometry.size.width, height: geometry.size.height)
-                            } else {
-                                // 1. GHOST CARDS
-                                ForEach(0..<3) { index in
-                                    GhostCard()
-                                        .frame(width: cardWidth, height: cardHeight)
-                                        .scaleEffect(0.9 - (Double(index) * 0.05))
-                                        .offset(y: 20 + (CGFloat(index) * 15))
-                                        .opacity(0.3 - (Double(index) * 0.1))
-                                        .zIndex(Double(-index))
-                                }
-                                
-                                // 2. REAL CARDS
-                                ForEach(feedManager.items.suffix(3)) { item in
-                                    let isTop = feedManager.items.last?.id == item.id
-                                    
-                                    if isTop {
-                                        DraggableCard(item: item) { direction in
-                                            lastSwipeDirection = direction
-                                            handleSwipe(direction: direction, item: item)
+                        FullScreenItemCard(item: item)
+                            .zIndex(isTop ? 2 : 1)
+                            .offset(y: isTop ? dragOffset : 0)
+                            .scaleEffect(isTop ? 1.0 : 0.95)
+                            .opacity(isTop ? 1.0 : (dragOffset < -50 ? 1.0 : 0.0))
+                            
+                            // --- GESTURES ---
+                            .onTapGesture(count: 2) {
+                                if isTop { handleDoubleTap(item: item) }
+                            }
+                            .onTapGesture(count: 1) {
+                                if isTop { selectedDetailItem = item }
+                            }
+                            .gesture(
+                                isTop ? DragGesture()
+                                    .onChanged { value in
+                                        if value.translation.height < 0 {
+                                            dragOffset = value.translation.height
+                                        } else {
+                                            dragOffset = value.translation.height / 5
                                         }
-                                        .onProfileTap {
-                                            selectedProfile = ProfileDestination(id: item.ownerId)
-                                        }
-                                        .onTapGesture { selectedDetailItem = item }
-                                        .frame(width: cardWidth, height: cardHeight)
-                                        .zIndex(100)
-                                        .transition(.asymmetric(
-                                            insertion: .identity,
-                                            removal: .move(edge: lastSwipeDirection == .left ? .leading : .trailing)
-                                        ))
-                                    } else {
-                                        TinderGlassCard(item: item)
-                                            .frame(width: cardWidth, height: cardHeight)
-                                            .zIndex(Double(feedManager.items.firstIndex(where: { $0.id == item.id }) ?? 0))
-                                            .scaleEffect(0.95)
-                                            .offset(y: 10)
                                     }
+                                    .onEnded { value in
+                                        if value.translation.height < -150 {
+                                            dismissItem(item)
+                                        } else {
+                                            withAnimation(.spring()) { dragOffset = 0 }
+                                        }
+                                    } : nil
+                            )
+                            
+                            // --- OVERLAYS (Quick Offer Button) ---
+                            .overlay(alignment: .bottomTrailing) {
+                                if isTop {
+                                    Button(action: { itemForQuickOffer = item }) {
+                                        ZStack {
+                                            Circle()
+                                                .fill(Color.black.opacity(0.8))
+                                                .frame(width: 56, height: 56)
+                                                .shadow(color: .cyan.opacity(0.5), radius: 10, y: 5)
+                                                .overlay(
+                                                    Circle()
+                                                        .stroke(LinearGradient(colors: [.cyan, .purple], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 2)
+                                                )
+                                            
+                                            Image(systemName: "arrow.triangle.2.circlepath")
+                                                .font(.system(size: 24, weight: .bold))
+                                                .foregroundStyle(.white)
+                                        }
+                                    }
+                                    .padding(.trailing, 20)
+                                    .padding(.bottom, 155)
+                                    .opacity(Double(1.0 - (abs(dragOffset) / 100)))
                                 }
                             }
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                    .padding(.vertical, 10)
-                    
-                    // --- BOTTOM ACTION BAR ---
-                    if !feedManager.items.isEmpty {
-                        HStack(spacing: 40) {
-                            ActionButton(icon: "xmark", color: .red) {
-                                triggerButtonSwipe(direction: .left)
-                            }
-                            ActionButton(icon: "star.fill", color: .blue, scale: 0.8) { }
-                            ActionButton(icon: "heart.fill", color: .cyan) {
-                                triggerButtonSwipe(direction: .right)
-                            }
-                        }
-                        .padding(.bottom, 60)
-                        .padding(.top, 10)
                     }
                 }
+                
+                // 4. Company Branding (Top Left)
+                VStack {
+                    HStack {
+                        Text("swappr.")
+                            .font(.system(size: 34, weight: .heavy, design: .rounded))
+                            .foregroundStyle(.white)
+                            .shadow(color: .black.opacity(0.3), radius: 5, x: 0, y: 2)
+                            .padding(.leading, 24)
+                            .padding(.top, 60)
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .allowsHitTesting(false)
+                
+                // 5. Heart Animation
+                if showHeartOverlay {
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 100))
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.2), radius: 10)
+                        .transition(.scale.combined(with: .opacity))
+                        .zIndex(100)
+                }
+                
+                // 6. ✨ MATCH VIEW OVERLAY (For Testing)
+                if showMatchView, let item = matchedItem {
+                    MatchView()
+                        .transition(.opacity)
+                        .zIndex(200)
+                }
             }
-            .onAppear {
-                Task {
+            .task {
+                if feedManager.items.isEmpty {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
                     await feedManager.fetchFeed()
                 }
             }
-            .fullScreenCover(item: $selectedDetailItem) { item in
-                ProductDetailView(item: item)
+            .sheet(item: $selectedDetailItem) { item in
+                NavigationStack {
+                    ProductDetailView(item: item)
+                }
+                .presentationDragIndicator(.visible)
             }
-            .sheet(item: $selectedProfile) { dest in
-                PublicProfileView(userId: dest.id)
-                    .presentationDetents([.fraction(0.85)]) // Partial sheet
-            }
-            .alert("Error", isPresented: $tradeManager.showError) {
-                Button("OK") { tradeManager.clearError() }
-            } message: {
-                Text(tradeManager.errorMessage ?? "An unknown error occurred")
+            .sheet(item: $itemForQuickOffer) { item in
+                QuickOfferSheet(wantedItem: item)
+                    .presentationDetents([.medium, .large])
             }
         }
     }
     
     // MARK: - Logic
     
-    func triggerButtonSwipe(direction: CardSwipeDirection) {
-        guard let topItem = feedManager.items.last else { return }
-        lastSwipeDirection = direction
-        withAnimation(.easeInOut(duration: 0.4)) {
-            handleSwipe(direction: direction, item: topItem)
+    func dismissItem(_ item: TradeItem) {
+        withAnimation(.easeOut(duration: 0.2)) { dragOffset = -1000 }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            feedManager.removeItem(id: item.id)
+            dragOffset = 0
         }
     }
     
-    func handleSwipe(direction: CardSwipeDirection, item: TradeItem) {
-        if direction == .right { Haptics.shared.playSuccess() }
-        else { Haptics.shared.playLight() }
+    func handleDoubleTap(item: TradeItem) {
+        // 1. Play standard heart animation
+        withAnimation(.spring(duration: 0.3)) { showHeartOverlay = true }
+        Haptics.shared.playSuccess()
         
-        feedManager.removeItem(id: item.id)
+        Task { await tradeManager.markAsInterested(item: item) }
         
-        if direction == .right {
-            Task {
-                await tradeManager.markAsInterested(item: item)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                showHeartOverlay = false
+            }
+            
+            // ✨ TESTING LOGIC:
+            // Force "Match" screen to appear if user has items (simulating a mutual match)
+            if !userManager.userItems.isEmpty {
+                matchedItem = item
+                withAnimation { showMatchView = true }
+            } else {
+                // If no items, just remove card normally
+                feedManager.removeItem(id: item.id)
             }
         }
     }
 }
 
-// MARK: - SUBVIEWS
+// MARK: - SUBVIEWS (Updated with Gamification)
 
-// 1. Ghost Card
-struct GhostCard: View {
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 30)
-                .fill(.ultraThinMaterial)
-                .background(Color.white.opacity(0.05))
-                .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white.opacity(0.1), lineWidth: 1))
-                .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
-        }
-    }
-}
-
-// 2. Draggable Card
-struct DraggableCard: View {
+struct FullScreenItemCard: View {
     let item: TradeItem
-    var onSwipe: (CardSwipeDirection) -> Void
-    var onProfileTap: (() -> Void)? = nil
     
-    @State private var offset = CGSize.zero
-    @State private var rotation: Double = 0
-    @State private var lastHapticStep: Int = 0
+    // ✨ NEW: Gamification Logic
+    var rankTitle: String {
+        guard let count = item.ownerTradeCount else { return "Newcomer" }
+        switch count {
+        case 0...2: return "Novice"
+        case 3...9: return "Eco Trader"
+        case 10...24: return "Savant"
+        case 25...49: return "Hero"
+        default: return "Legend"
+        }
+    }
+    
+    var rankColor: Color {
+        switch rankTitle {
+        case "Novice": return .white.opacity(0.7)
+        case "Eco Trader": return .green
+        case "Savant": return .cyan
+        case "Hero": return .purple
+        case "Legend": return .yellow
+        default: return .gray
+        }
+    }
+    
+    var isPremium: Bool {
+        return item.ownerIsPremium ?? false
+    }
     
     var body: some View {
-        ZStack {
-            TinderGlassCard(item: item, onProfileTap: onProfileTap)
-            
-            if offset.width > 0 {
-                VStack {
-                    HStack {
-                        Image(systemName: "heart.fill").font(.system(size: 80)).foregroundStyle(.green).shadow(radius: 5).padding().background(Circle().fill(.white.opacity(0.2)))
-                        Spacer()
-                    }
-                    Spacer()
-                }.padding(40).opacity(Double(offset.width / 150))
-            } else if offset.width < 0 {
-                VStack {
-                    HStack {
-                        Spacer()
-                        Image(systemName: "xmark").font(.system(size: 80)).foregroundStyle(.red).shadow(radius: 5).padding().background(Circle().fill(.white.opacity(0.2)))
-                    }
-                    Spacer()
-                }.padding(40).opacity(Double(abs(offset.width) / 150))
-            }
-        }
-        .offset(x: offset.width, y: offset.height)
-        .rotationEffect(.degrees(rotation))
-        .gesture(
-            DragGesture()
-                .onChanged { gesture in
-                    let width = gesture.translation.width
-                    offset = gesture.translation
-                    rotation = Double(width / 20)
-                    let currentStep = Int(width / 40)
-                    if currentStep != lastHapticStep {
-                        Haptics.shared.playLight()
-                        lastHapticStep = currentStep
-                    }
-                }
-                .onEnded { gesture in
-                    let width = gesture.translation.width
-                    if width > 120 {
-                        Haptics.shared.playSuccess()
-                        animateSwipe(translation: 500, direction: .right)
-                    } else if width < -120 {
-                        Haptics.shared.playLight()
-                        animateSwipe(translation: -500, direction: .left)
-                    } else {
-                        withAnimation(.spring()) { offset = .zero; rotation = 0 }
-                    }
-                    lastHapticStep = 0
-                }
-        )
-    }
-    
-    func animateSwipe(translation: CGFloat, direction: CardSwipeDirection) {
-        withAnimation(.easeOut(duration: 0.3)) {
-            offset.width = translation
-            rotation = Double(translation / 10)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            onSwipe(direction)
-        }
-    }
-    
-    func onProfileTap(_ action: @escaping () -> Void) -> DraggableCard {
-        var copy = self
-        copy.onProfileTap = action
-        return copy
-    }
-}
-
-// 3. TinderGlassCard
-struct TinderGlassCard: View {
-    let item: TradeItem
-    var onProfileTap: (() -> Void)? = nil
-    
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            AsyncImageView(filename: item.imageUrl)
-                .scaledToFill()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.gray.opacity(0.3))
-                .clipped()
-            
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .bottom) {
-                    Text(item.title).font(.title).bold().foregroundStyle(.white).lineLimit(2)
-                    Spacer()
-                    Badge(text: item.category, color: .purple)
+        GeometryReader { geo in
+            ZStack(alignment: .bottomLeading) {
+                
+                // 1. Full Screen Image
+                AsyncImageView(filename: item.imageUrl)
+                    .scaledToFill()
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .overlay(
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.2), .black.opacity(0.9)],
+                            startPoint: .center,
+                            endPoint: .bottom
+                        )
+                    )
+                
+                // 2. ✨ PREMIUM BORDER (Visible only for Premium Users)
+                if isPremium {
+                    RoundedRectangle(cornerRadius: 0)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [.yellow.opacity(0.8), .orange.opacity(0.5), .clear],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            lineWidth: 4
+                        )
+                        .ignoresSafeArea()
                 }
                 
-                Button(action: {
-                    onProfileTap?()
-                }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "person.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.cyan)
-                        
-                        Text(item.ownerUsername ?? "Loading...")
-                            .font(.caption).bold()
+                // 3. Info Overlay
+                VStack(alignment: .leading, spacing: 6) {
+                    
+                    // ✨ NEW: Rank & Category Row
+                    HStack(spacing: 8) {
+                        // Category Pill
+                        Text(item.category.uppercased())
+                            .font(.system(size: 10, weight: .bold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(6)
                             .foregroundStyle(.white)
                         
-                        // Verification Checkmark
-                        if item.ownerIsVerified == true {
-                            Image(systemName: "checkmark.seal.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.cyan)
-                        }
+                        // Rank Pill
+                        Text(rankTitle.uppercased())
+                            .font(.system(size: 9, weight: .black))
+                            .foregroundStyle(rankColor)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(rankColor.opacity(0.15))
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(rankColor.opacity(0.3), lineWidth: 1))
+                    }
+                    
+                    // Title
+                    Text(item.title)
+                        .font(.system(size: 32, weight: .heavy))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                        .shadow(radius: 2)
+                    
+                    // User & Distance
+                    HStack(spacing: 6) {
+                        Image(systemName: "location.fill")
+                            .font(.caption)
+                            .foregroundStyle(.cyan)
+                        Text("\(String(format: "%.1f", item.distance)) km away")
+                            .font(.subheadline).bold()
+                            .foregroundStyle(.white.opacity(0.9))
                         
                         Text("•")
-                            .font(.caption).foregroundStyle(.white.opacity(0.5))
+                            .foregroundStyle(.white.opacity(0.5))
                         
-                        HStack(spacing: 2) {
-                            Image(systemName: "star.fill").font(.caption2).foregroundStyle(.yellow)
-                            Text("\(String(format: "%.1f", item.ownerRating ?? 0))")
-                                .font(.caption2).bold().foregroundStyle(.white)
+                        // User Name with Verification Check
+                        HStack(spacing: 4) {
+                            Text(item.ownerUsername ?? "User")
+                                .font(.subheadline)
+                                .foregroundStyle(.white.opacity(0.8))
                             
+                            if item.ownerIsVerified == true {
+                                Image(systemName: "checkmark.seal.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.cyan)
+                            }
                         }
                     }
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 8)
-                    .background(Color.black.opacity(0.4))
-                    .cornerRadius(12)
                 }
-                .buttonStyle(.plain)
-                .padding(.bottom, 4)
-                
-                Text(item.condition).font(.subheadline).bold().foregroundStyle(.cyan).padding(.bottom, 2)
-                Text(item.description).font(.subheadline).foregroundStyle(.white.opacity(0.9)).lineLimit(2)
-                
-                if item.distance > 0 {
-                    HStack {
-                        Image(systemName: "location.fill").font(.caption).foregroundStyle(.white.opacity(0.7))
-                        Text("\(String(format: "%.1f", item.distance)) km").font(.caption).foregroundStyle(.white.opacity(0.7))
-                    }
-                }
-            }
-            .padding(20).padding(.bottom, 20)
-            .background(LinearGradient(colors: [.black.opacity(0.9), .black.opacity(0.0)], startPoint: .bottom, endPoint: .top))
-        }
-        .cornerRadius(30)
-        .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white.opacity(0.3), lineWidth: 1))
-        .shadow(color: .black.opacity(0.4), radius: 20, y: 10)
-    }
-}
-
-// 4. ActionButton
-struct ActionButton: View {
-    let icon: String; let color: Color; var scale: CGFloat = 1.0; let action: () -> Void
-    var body: some View {
-        Button(action: action) {
-            ZStack {
-                Circle().fill(.ultraThinMaterial).frame(width: 65 * scale, height: 65 * scale)
-                    .shadow(color: .black.opacity(0.2), radius: 10)
-                    .overlay(Circle().stroke(color.opacity(0.5), lineWidth: 2))
-                Image(systemName: icon).font(.system(size: 28 * scale, weight: .bold)).foregroundStyle(color)
+                .padding(.leading, 24)
+                .padding(.trailing, 90)
+                .padding(.bottom, 145)
             }
         }
-    }
-}
-
-// 5. EmptyFeedState
-struct EmptyFeedState: View {
-    @ObservedObject var feedManager: FeedManager
-    
-    var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "sparkles.rectangle.stack.fill")
-                .font(.system(size: 80))
-                .foregroundStyle(LinearGradient(colors: [.cyan, .purple], startPoint: .top, endPoint: .bottom))
-                .shadow(radius: 10)
-            
-            Text("No items found")
-                .font(.title2).bold()
-                .foregroundStyle(.white)
-            
-            Text("Adjust your ISO settings in Profile to see more!")
-                .foregroundStyle(.white.opacity(0.7))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-            
-            Button("Refresh Feed") {
-                Task { await feedManager.fetchFeed() }
-            }
-            .font(.caption).foregroundStyle(.cyan)
-        }
-    }
-}
-
-// 6. Badge
-struct Badge: View {
-    let text: String; let color: Color
-    var body: some View {
-        Text(text).font(.caption).bold().padding(.horizontal, 10).padding(.vertical, 5)
-            .background(color.opacity(0.3)).foregroundStyle(.white).cornerRadius(8)
+        .ignoresSafeArea()
+        .background(Color.black)
     }
 }

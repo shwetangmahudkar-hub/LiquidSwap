@@ -1,11 +1,3 @@
-//
-//  AuthView.swift
-//  LiquidSwap
-//
-//  Created by Shwetang Mahudkar on 2025-12-23.
-//
-
-
 import SwiftUI
 
 struct AuthView: View {
@@ -21,8 +13,7 @@ struct AuthView: View {
             VStack(spacing: 24) {
                 // Header
                 Text(isLoginMode ? "Welcome Back" : "Create Account")
-                    .font(.largeTitle)
-                    .bold()
+                    .appFont(34, weight: .bold) // ✨ Standardized Font
                     .foregroundStyle(.white)
                 
                 // Inputs
@@ -30,23 +21,33 @@ struct AuthView: View {
                     TextField("Email", text: $viewModel.email)
                         .textContentType(.emailAddress)
                         .textInputAutocapitalization(.never)
+                        .appFont(16)
                         .padding()
                         .background(.ultraThinMaterial)
                         .cornerRadius(12)
                         .foregroundStyle(.white)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                        )
                     
                     SecureField("Password", text: $viewModel.password)
                         .textContentType(.password)
+                        .appFont(16)
                         .padding()
                         .background(.ultraThinMaterial)
                         .cornerRadius(12)
                         .foregroundStyle(.white)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                        )
                 }
                 
                 // Error Message
                 if let error = viewModel.errorMessage {
                     Text(error)
-                        .font(.caption)
+                        .appFont(12)
                         .foregroundStyle(.red)
                         .multilineTextAlignment(.center)
                 }
@@ -66,20 +67,15 @@ struct AuthView: View {
                             .tint(.black)
                     } else {
                         Text(isLoginMode ? "Log In" : "Sign Up")
-                            .bold()
-                            .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.cyan)
-                            .foregroundStyle(.black)
-                            .cornerRadius(12)
                     }
                 }
+                .buttonStyle(PrimaryButtonStyle()) // ✨ Standardized Button
                 .disabled(viewModel.isLoading)
                 
                 // Toggle Mode
                 Button(action: { isLoginMode.toggle() }) {
                     Text(isLoginMode ? "New here? Create Account" : "Already have an account? Log In")
-                        .font(.subheadline)
+                        .appFont(14)
                         .foregroundStyle(.white.opacity(0.8))
                 }
             }

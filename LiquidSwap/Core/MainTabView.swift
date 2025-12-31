@@ -6,6 +6,9 @@ struct MainTabView: View {
     
     @StateObject var tabManager = TabBarManager.shared
     
+    // ✨ Timer for Auto-Hide
+    @State private var inactivityTimer: Timer?
+    
     var body: some View {
         ZStack {
             // 1. The Content Layer
@@ -20,31 +23,53 @@ struct MainTabView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // ✨ Detects ANY touch/drag to keep the bar alive
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        resetInactivityTimer()
+                    }
+            )
             
-            // 2. The Floating Glass Pill
+            // 2. The Floating Glass Pill (Visible State)
             if tabManager.isVisible {
                 VStack {
                     Spacer()
                     
                     HStack(spacing: 0) {
                         // 1. Discover
-                        TabButton(icon: "map.fill", label: "Map", isSelected: selectedTab == 0) { selectedTab = 0 }
+                        TabButton(icon: "map.fill", label: "Map", isSelected: selectedTab == 0) {
+                            selectedTab = 0
+                            resetInactivityTimer()
+                        }
                         Spacer()
                         
                         // 2. Trades
-                        TabButton(icon: "arrow.triangle.2.circlepath", label: "Trades", isSelected: selectedTab == 1) { selectedTab = 1 }
+                        TabButton(icon: "arrow.triangle.2.circlepath", label: "Trades", isSelected: selectedTab == 1) {
+                            selectedTab = 1
+                            resetInactivityTimer()
+                        }
                         Spacer()
                         
                         // 3. Swap (Center)
-                        TabButton(icon: "flame.fill", label: "Swap", isSelected: selectedTab == 2) { selectedTab = 2 }
+                        TabButton(icon: "flame.fill", label: "Swap", isSelected: selectedTab == 2) {
+                            selectedTab = 2
+                            resetInactivityTimer()
+                        }
                         Spacer()
                         
                         // 4. Chat
-                        TabButton(icon: "bubble.left.and.bubble.right.fill", label: "Chat", isSelected: selectedTab == 3) { selectedTab = 3 }
+                        TabButton(icon: "bubble.left.and.bubble.right.fill", label: "Chat", isSelected: selectedTab == 3) {
+                            selectedTab = 3
+                            resetInactivityTimer()
+                        }
                         Spacer()
                         
                         // 5. Profile
-                        TabButton(icon: "person.fill", label: "Profile", isSelected: selectedTab == 4) { selectedTab = 4 }
+                        TabButton(icon: "person.fill", label: "Profile", isSelected: selectedTab == 4) {
+                            selectedTab = 4
+                            resetInactivityTimer()
+                        }
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 14)
@@ -72,13 +97,63 @@ struct MainTabView: View {
                     
                     // 🛠️ FLOAT LAYOUT
                     .padding(.horizontal, 20)
-                    .padding(.bottom, 0)
-                    
-                    // ✨ NEW: Moved 15 points lower (10 + 10)
-                    .offset(y: 20)
+                    .padding(.bottom, 15) // Raised for iPhone SE visibility
                 }
                 .zIndex(10)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
+                // ✨ Detect taps on the bar itself
+                .onTapGesture {
+                    resetInactivityTimer()
+                }
+            } else {
+                // ✨ NEW: Invisible "Corner Touch Zones" to bring the bar back
+                VStack {
+                    Spacer()
+                    
+                    HStack {
+                        // 👈 LEFT CORNER ZONE
+                        Color.clear
+                            .contentShape(Rectangle()) // Makes transparent color clickable
+                            .frame(width: 80, height: 80) // Square touch area
+                            .onTapGesture {
+                                Haptics.shared.playLight()
+                                tabManager.show()
+                                resetInactivityTimer()
+                            }
+                        
+                        Spacer() // 👐 Open Center (Pass-through for map/feed)
+                        
+                        // 👉 RIGHT CORNER ZONE
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .frame(width: 80, height: 80)
+                            .onTapGesture {
+                                Haptics.shared.playLight()
+                                tabManager.show()
+                                resetInactivityTimer()
+                            }
+                    }
+                }
+                .zIndex(9) // Sits above content but below where tab bar would be
+            }
+        }
+        .onAppear {
+            resetInactivityTimer()
+        }
+    }
+    
+    // MARK: - Timer Logic
+    
+    func resetInactivityTimer() {
+        // Cancel existing timer
+        inactivityTimer?.invalidate()
+        
+        // Start new 5-second timer
+        inactivityTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { _ in
+            Task { @MainActor in
+                if tabManager.isVisible {
+                    tabManager.hide()
+                }
             }
         }
     }
