@@ -273,7 +273,17 @@ class TradeManager: ObservableObject {
         do {
             let response: [TradeOffer] = try await client.from("trades").select().in("status", values: ["accepted", "completed"]).or("and(sender_id.eq.\(myId),receiver_id.eq.\(partnerId)),and(sender_id.eq.\(partnerId),receiver_id.eq.\(myId))").execute().value
             guard let trade = response.sorted(by: { $0.createdAt > $1.createdAt }).first else { return false }
-            if trade.status == "accepted" { try await db.updateTradeStatus(tradeId: trade.id, status: "completed") }
+            
+            if trade.status == "accepted" {
+                try await db.updateTradeStatus(tradeId: trade.id, status: "completed")
+                
+                // ✨ PROGRESSION TRIGGER: Check achievements after trade completion
+                await ProgressionManager.shared.onTradeCompleted()
+                
+                // Refresh user data to update trade count
+                await userManager.loadUserData()
+            }
+            
             return true
         } catch { return false }
     }

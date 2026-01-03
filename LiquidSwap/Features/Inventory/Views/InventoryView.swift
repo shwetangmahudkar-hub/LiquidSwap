@@ -119,7 +119,8 @@ struct InventoryView: View {
                             
                             // --- STATS ROW ---
                             HStack(spacing: 12) {
-                                GlassStat(icon: "leaf.fill", value: userManager.carbonSaved, label: "Impact", color: .green)
+                                // ✨ FIX: Changed carbonSaved to carbonSavedFormatted
+                                GlassStat(icon: "leaf.fill", value: userManager.carbonSavedFormatted, label: "Impact", color: .green)
                                 GlassStat(icon: "star.fill", value: userManager.userRating == 0 ? "-" : String(format: "%.1f", userManager.userRating), label: "Rating", color: .yellow)
                                 GlassStat(icon: "arrow.triangle.2.circlepath", value: "\(userManager.completedTradeCount)", label: "Trades", color: .cyan)
                             }

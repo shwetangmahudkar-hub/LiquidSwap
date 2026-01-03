@@ -15,10 +15,13 @@ struct TradesView: View {
     // Sheet State
     @State private var selectedItemForOffer: TradeItem?
     @State private var selectedItemForDetail: TradeItem?
-    @State private var selectedProfileUserId: UUID?
+    
+    // 🛠️ FIX: Use a wrapper for the UUID to satisfy 'Identifiable'
+    @State private var selectedProfileSheet: TradeProfileSheetWrapper?
+    
     @State private var selectedOfferForCounter: TradeOffer?
     
-    // Navigation State (✨ NEW: For Auto-Redirect)
+    // Navigation State (For Auto-Redirect)
     @State private var navigateToChatTrade: TradeOffer?
     
     // Delete Confirmation
@@ -74,7 +77,7 @@ struct TradesView: View {
                         }
                     }
                 }
-                // ✨ NEW: Auto-Navigation to Chat Room
+                // Auto-Navigation to Chat Room
                 .navigationDestination(item: $navigateToChatTrade) { trade in
                     ChatRoomView(trade: trade)
                 }
@@ -95,10 +98,10 @@ struct TradesView: View {
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
                 }
-                // Profile Sheet
-                .sheet(item: $selectedProfileUserId) { userId in
+                // 🛠️ FIX: Profile Sheet using Wrapper
+                .sheet(item: $selectedProfileSheet) { wrapper in
                     NavigationStack {
-                        PublicProfileView(userId: userId)
+                        PublicProfileView(userId: wrapper.id)
                     }
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
@@ -132,7 +135,8 @@ struct TradesView: View {
                     Text("This will remove the offer permanently.")
                 }
             } else {
-                // Fallback on earlier versions
+                // Fallback on earlier versions if needed
+                EmptyView()
             }
         }
     }
@@ -216,7 +220,10 @@ struct TradesView: View {
                 ForEach(tradeManager.incomingOffers) { offer in
                     OfferCard(
                         offer: offer,
-                        onViewProfile: { selectedProfileUserId = offer.senderId },
+                        onViewProfile: {
+                            // 🛠️ FIX: Use wrapper
+                            selectedProfileSheet = TradeProfileSheetWrapper(id: offer.senderId)
+                        },
                         onCounter: { selectedOfferForCounter = offer }
                     )
                     .contextMenu {
@@ -231,7 +238,8 @@ struct TradesView: View {
                             Label("Counter Offer", systemImage: "arrow.triangle.2.circlepath")
                         }
                         Button {
-                            selectedProfileUserId = offer.senderId
+                            // 🛠️ FIX: Use wrapper
+                            selectedProfileSheet = TradeProfileSheetWrapper(id: offer.senderId)
                         } label: {
                             Label("View Sender Profile", systemImage: "person.circle")
                         }
@@ -277,7 +285,10 @@ struct TradesView: View {
                         item: item,
                         onTap: { selectedItemForOffer = item },
                         onViewDetail: { selectedItemForDetail = item },
-                        onViewProfile: { selectedProfileUserId = item.ownerId },
+                        onViewProfile: {
+                            // 🛠️ FIX: Use wrapper
+                            selectedProfileSheet = TradeProfileSheetWrapper(id: item.ownerId)
+                        },
                         onDelete: {
                             itemToDelete = item
                             showDeleteConfirmation = true
@@ -297,15 +308,12 @@ struct TradesView: View {
             if accept && success {
                 Haptics.shared.playSuccess()
                 
-                // ✨ NEW: Auto-Redirect Logic
-                // 1. Create a local copy with updated status so ChatRoomView renders correctly
+                // Auto-Redirect Logic
                 var acceptedTrade = offer
                 acceptedTrade.status = "accepted"
                 
-                // 2. Wait briefly so user sees the card animation/haptic confirmation
                 try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
                 
-                // 3. Navigate
                 await MainActor.run {
                     navigateToChatTrade = acceptedTrade
                 }
@@ -324,11 +332,8 @@ struct TradesView: View {
     
     private func cancelSentOffer(_ offer: TradeOffer) {
         Task {
-            // Update DB Status
             try? await DatabaseService.shared.updateTradeStatus(tradeId: offer.id, status: "cancelled")
             Haptics.shared.playMedium()
-            
-            // Refresh Data
             await tradeManager.loadTradesData()
         }
     }
@@ -477,8 +482,6 @@ struct OfferCard: View {
     }
     
     func handleResponse(accept: Bool) {
-        // Updated to use the new method that handles navigation
-        // But for generic buttons outside the main list, we can keep simple
         isProcessing = true
         Haptics.shared.playLight()
         Task {
@@ -496,7 +499,6 @@ struct OfferCard: View {
     }
 }
 
-// ✨ NEW: Sent Offer Card
 struct SentOfferCard: View {
     let offer: TradeOffer
     let onCancel: () -> Void
@@ -524,7 +526,6 @@ struct SentOfferCard: View {
             
             // Items
             HStack(spacing: 12) {
-                // For Sent Offers: "You Offered" (Offered Item) -> "For Their" (Wanted Item)
                 itemVisual(item: offer.offeredItem, label: "YOU OFFERED", borderColor: .orange)
                 VStack(spacing: 4) {
                     Image(systemName: "arrow.right")
@@ -536,7 +537,6 @@ struct SentOfferCard: View {
             
             Divider().background(Color.white.opacity(0.1))
             
-            // Cancel Action
             Button(action: onCancel) {
                 HStack {
                     Image(systemName: "trash")
@@ -613,4 +613,9 @@ struct InterestedItemCard: View {
             Button(role: .destructive) { onDelete() } label: { Label("Remove", systemImage: "heart.slash") }
         }
     }
+}
+
+// 🛠️ FIX: Helper Struct for Identifiable UUID (prevents build error)
+struct TradeProfileSheetWrapper: Identifiable {
+    let id: UUID
 }

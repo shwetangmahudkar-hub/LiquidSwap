@@ -20,10 +20,18 @@ struct MainTabView: View {
                 switch selectedTab {
                 case 0: DiscoverView()      // 🔍 Map
                 case 1: TradesView()        // 📦 Offers
-                case 2: FeedView()          // 🔥 Swappr (Center)
+                case 2: if #available(iOS 17.0, *) {
+                    FeedView()
+                } else {
+                    // Fallback on earlier versions
+                }          // 🔥 Swappr (Center)
                 case 3: ChatsListView()     // 💬 Chat
                 case 4: InventoryView()     // 👤 Profile
-                default: FeedView()
+                default: if #available(iOS 17.0, *) {
+                    FeedView()
+                } else {
+                    // Fallback on earlier versions
+                }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

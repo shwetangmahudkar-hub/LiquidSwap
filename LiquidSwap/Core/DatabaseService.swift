@@ -21,7 +21,7 @@ class DatabaseService {
             .from("items")
             .select()
             .order("created_at", ascending: false)
-            .range(from: from, to: to) // ✨ Fetch only this batch
+            .range(from: from, to: to)
             .execute()
             .value
     }
@@ -48,7 +48,6 @@ class DatabaseService {
     
     func createItem(item: TradeItem) async throws {
         // ✨ DTO (Data Transfer Object) for safe insertion
-        // Only includes columns that actually exist in the 'items' table
         struct TradeItemInsert: Encodable {
             let id: UUID
             let owner_id: UUID
@@ -147,6 +146,60 @@ class DatabaseService {
         try await client.from("profiles").upsert(profile).execute()
     }
     
+    // ✨ NEW: XP Persistence
+    func updateUserXP(userId: UUID, xp: Int) async throws {
+        struct XPUpdate: Encodable {
+            let xp: Int
+        }
+        // Minimal payload update to save bandwidth
+        try await client
+            .from("profiles")
+            .update(XPUpdate(xp: xp))
+            .eq("id", value: userId)
+            .execute()
+    }
+    
+    // MARK: - ✨ STREAK MANAGEMENT (NEW)
+    
+    /// Updates user's streak data in the database
+    func updateStreak(userId: UUID, currentStreak: Int, longestStreak: Int, lastActiveDate: Date) async throws {
+        struct StreakUpdate: Encodable {
+            let current_streak: Int
+            let longest_streak: Int
+            let last_active_date: Date
+        }
+        
+        let data = StreakUpdate(
+            current_streak: currentStreak,
+            longest_streak: longestStreak,
+            last_active_date: lastActiveDate
+        )
+        
+        try await client
+            .from("profiles")
+            .update(data)
+            .eq("id", value: userId)
+            .execute()
+    }
+    
+    /// Fetches streak data for a specific user (useful for public profiles)
+    func fetchStreakData(userId: UUID) async throws -> (current: Int, longest: Int) {
+        struct StreakResponse: Decodable {
+            let current_streak: Int?
+            let longest_streak: Int?
+        }
+        
+        let response: StreakResponse = try await client
+            .from("profiles")
+            .select("current_streak, longest_streak")
+            .eq("id", value: userId)
+            .single()
+            .execute()
+            .value
+        
+        return (response.current_streak ?? 0, response.longest_streak ?? 0)
+    }
+    
     // MARK: - ACTIVITY & EVENTS
     
     func fetchActivityEvents(for userId: UUID) async throws -> [ActivityEvent] {
@@ -184,14 +237,13 @@ class DatabaseService {
         var events: [ActivityEvent] = []
         
         for like in likes {
-            // Ensure we have both the actor profile and the item data
             if let actor = actorsDict[like.user_id],
                let item = itemsDict[like.item_id] {
                 
-                // Don't show activity if I liked my own item (edge case)
+                // Don't show activity if I liked my own item
                 if actor.id != userId {
                     let event = ActivityEvent(
-                        id: UUID(), // Ephemeral ID
+                        id: UUID(),
                         actor: actor,
                         item: item,
                         createdAt: like.created_at,
@@ -263,7 +315,6 @@ class DatabaseService {
         return blocks.map { $0.blocked_id }
     }
     
-    // ✨ NEW: Added to fix ProductDetailView error
     func reportItem(itemId: UUID, userId: UUID, reason: String) async throws {
         struct ReportData: Encodable {
             let item_id: UUID
@@ -284,6 +335,8 @@ class DatabaseService {
         try await client.from("reports").insert(data).execute()
     }
 
+    // MARK: - REVIEWS
+    
     func submitReview(reviewerId: UUID, reviewedId: UUID, rating: Int, comment: String) async throws {
         struct ReviewData: Encodable {
             let reviewer_id: UUID
@@ -309,6 +362,7 @@ class DatabaseService {
         return Double(total) / Double(reviews.count)
     }
     
+    /// Count of reviews received by a user
     func fetchReviewCount(userId: UUID) async throws -> Int {
         let count = try await client
             .from("reviews")
@@ -318,6 +372,30 @@ class DatabaseService {
             .count
         
         return count ?? 0
+    }
+    
+    // ✨ NEW: Count of reviews given by a user (for Community Star achievement)
+    func fetchReviewsGivenCount(userId: UUID) async throws -> Int {
+        let count = try await client
+            .from("reviews")
+            .select("*", head: true, count: .exact)
+            .eq("reviewer_id", value: userId)
+            .execute()
+            .count
+        
+        return count ?? 0
+    }
+    
+    // ✨ NEW: Fetch recent reviews for display
+    func fetchUserReviews(userId: UUID, limit: Int = 10) async throws -> [UserReview] {
+        return try await client
+            .from("reviews")
+            .select()
+            .eq("reviewed_user_id", value: userId)
+            .order("created_at", ascending: false)
+            .limit(limit)
+            .execute()
+            .value
     }
     
     // MARK: - TRADES
@@ -355,5 +433,95 @@ class DatabaseService {
     
     func createTradeOffer(offer: TradeOffer) async throws {
         try await client.from("trades").insert(offer).execute()
+    }
+    
+    // MARK: - ✨ PROGRESSION STATISTICS (NEW)
+    
+    /// Fetches trades within a date range (for streak calculations & achievements)
+    func fetchTradesInDateRange(userId: UUID, from startDate: Date, to endDate: Date) async throws -> Int {
+        let count = try await client
+            .from("trades")
+            .select("id", head: true, count: .exact)
+            .or("sender_id.eq.\(userId),receiver_id.eq.\(userId)")
+            .eq("status", value: "completed")
+            .gte("created_at", value: startDate.ISO8601Format())
+            .lte("created_at", value: endDate.ISO8601Format())
+            .execute()
+            .count
+        
+        return count ?? 0
+    }
+    
+    /// Fetches category breakdown for a user's completed trades (for Category King achievement)
+    func fetchTradeCategoryBreakdown(userId: UUID) async throws -> [String: Int] {
+        // First get all completed trades for this user
+        struct TradeWithItems: Decodable {
+            let offered_item_id: UUID
+            let wanted_item_id: UUID
+        }
+        
+        let trades: [TradeWithItems] = try await client
+            .from("trades")
+            .select("offered_item_id, wanted_item_id")
+            .or("sender_id.eq.\(userId),receiver_id.eq.\(userId)")
+            .eq("status", value: "completed")
+            .execute()
+            .value
+        
+        if trades.isEmpty { return [:] }
+        
+        // Collect all item IDs
+        var itemIds = Set<UUID>()
+        for trade in trades {
+            itemIds.insert(trade.offered_item_id)
+            itemIds.insert(trade.wanted_item_id)
+        }
+        
+        // Fetch items to get categories
+        let items = try await fetchBatchItems(ids: Array(itemIds))
+        
+        // Count categories
+        var categoryCount: [String: Int] = [:]
+        for item in items {
+            categoryCount[item.category, default: 0] += 1
+        }
+        
+        return categoryCount
+    }
+    
+    /// Checks if user has received any 5-star reviews (for Five Star achievement)
+    func hasReceivedFiveStarReview(userId: UUID) async throws -> Bool {
+        let count = try await client
+            .from("reviews")
+            .select("id", head: true, count: .exact)
+            .eq("reviewed_user_id", value: userId)
+            .eq("rating", value: 5)
+            .execute()
+            .count
+        
+        return (count ?? 0) > 0
+    }
+}
+
+// MARK: - ✨ UserReview Model (NEW)
+
+struct UserReview: Codable, Identifiable {
+    let id: UUID
+    let reviewerId: UUID
+    let reviewedUserId: UUID
+    let rating: Int
+    let comment: String
+    let createdAt: Date
+    
+    // Optional: Hydrated reviewer profile
+    var reviewerProfile: UserProfile?
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case reviewerId = "reviewer_id"
+        case reviewedUserId = "reviewed_user_id"
+        case rating
+        case comment
+        case createdAt = "created_at"
     }
 }

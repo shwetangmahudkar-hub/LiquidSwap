@@ -184,6 +184,12 @@ struct RateUserView: View {
                     comment: finalComment
                 )
                 
+                // ✨ PROGRESSION TRIGGER: Check achievements after submitting review
+                await ProgressionManager.shared.onReviewSubmitted()
+                
+                // Refresh user data to update reviews given count
+                await UserManager.shared.loadUserData()
+                
                 await MainActor.run {
                     Haptics.shared.playSuccess()
                     showSuccess = true
