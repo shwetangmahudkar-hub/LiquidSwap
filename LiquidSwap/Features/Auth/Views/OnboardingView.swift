@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct OnboardingView: View {
-    @AppStorage("isOnboarding") var isOnboarding: Bool = true
+    // ✨ FIXED: Observed from AuthViewModel for global sync
+    @ObservedObject var authVM: AuthViewModel
     @ObservedObject var userManager = UserManager.shared
     
     // Navigation State
@@ -51,7 +52,7 @@ struct OnboardingView: View {
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .animation(.spring(response: 0.5, dampingFraction: 0.8), value: currentPage)
                 
-                // --- BOTTOM CONTROLS (iOS 26 UX) ---
+                // --- BOTTOM CONTROLS (Glassmorphism & One-Handed UX) ---
                 VStack(spacing: 20) {
                     // Page Indicators
                     HStack(spacing: 8) {
@@ -63,7 +64,7 @@ struct OnboardingView: View {
                         }
                     }
                     
-                    // Main Action Button
+                    // Main Action Button (Compact & Bottom-heavy for easy reach)
                     Button(action: handleNext) {
                         Text(currentPage == 3 ? "Start Swapping" : "Next")
                             .font(.headline.bold())
@@ -71,13 +72,19 @@ struct OnboardingView: View {
                             .frame(maxWidth: .infinity)
                             .frame(height: 56)
                             .background(Color.cyan)
-                            .clipShape(Capsule()) // Modern pill shape
+                            .clipShape(Capsule())
                             .shadow(color: .cyan.opacity(0.5), radius: 10, y: 5)
                     }
                 }
-                .padding(24)
-                .background(.ultraThinMaterial) // slide-up glass effect
-                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 24, topTrailingRadius: 24))
+                .padding(.horizontal, 24)
+                .padding(.top, 20)
+                .padding(.bottom, 40) // Extra padding for home indicator reach
+                .background(.ultraThinMaterial) // Glass effect
+                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 32, topTrailingRadius: 32))
+                .overlay(
+                    UnevenRoundedRectangle(topLeadingRadius: 32, topTrailingRadius: 32)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                )
             }
             .ignoresSafeArea(edges: .bottom)
         }
@@ -101,7 +108,13 @@ struct OnboardingView: View {
                     bio: "Ready to trade!",
                     image: selectedImage
                 )
-                withAnimation { isOnboarding = false }
+                
+                // ✨ FIXED: Update the central AuthViewModel to trigger the slide-down transition
+                await MainActor.run {
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                        authVM.isOnboarding = false
+                    }
+                }
             }
         }
     }

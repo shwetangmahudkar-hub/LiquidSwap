@@ -15,86 +15,88 @@ struct VerificationView: View {
     @State private var isSuccess = false
     
     var body: some View {
-        ZStack {
-            // Background
-            LiquidBackground()
+        ZStack(alignment: .top) {
+            // 1. Global Background
+            LiquidBackground().ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // Header
-                HStack {
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(.white.opacity(0.6))
-                    }
-                    Spacer()
-                    Text("Get Verified")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                    Spacer()
-                    Color.clear.frame(width: 30) // Balance
-                }
-                .padding()
+                // 2. Minimalist Title (No "X" Button)
+                Text("Get Verified")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .padding(.top, 24) // Clean spacing from top edge
+                    .padding(.bottom, 20)
                 
+                // 3. Main Content
                 ScrollView {
-                    VStack(spacing: 30) {
+                    VStack(spacing: 24) {
                         
-                        // Icon
+                        // Hero Icon (Centered & Compact)
                         ZStack {
                             Circle()
-                                .fill(Color.cyan.opacity(0.2))
-                                .frame(width: 100, height: 100)
+                                .fill(Color.cyan.opacity(0.1))
+                                .frame(width: 80, height: 80)
+                                .overlay(Circle().stroke(Color.cyan.opacity(0.3), lineWidth: 1))
                             
                             Image(systemName: "checkmark.seal.fill")
-                                .font(.system(size: 50))
+                                .font(.system(size: 40))
                                 .foregroundStyle(.cyan)
                                 .shadow(color: .cyan.opacity(0.5), radius: 10)
                         }
-                        .padding(.top, 20)
                         
-                        // Explanation
-                        VStack(spacing: 12) {
-                            Text("Build Trust instantly.")
-                                .font(.title2.bold())
+                        // Value Proposition
+                        VStack(spacing: 8) {
+                            Text("Build Trust & Credibility")
+                                .font(.title3.bold())
                                 .foregroundStyle(.white)
                             
-                            Text("Verified traders get 3x more offers and premium visibility. Upload a valid ID to get your badge.")
-                                .font(.body)
-                                .multilineTextAlignment(.center)
+                            Text("Verified users get 3x more trades and exclusive access to premium drops.")
+                                .font(.footnote)
                                 .foregroundStyle(.white.opacity(0.7))
-                                .padding(.horizontal, 20)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 30)
                         }
                         
-                        // Form
-                        VStack(alignment: .leading, spacing: 20) {
+                        // Form Fields
+                        VStack(spacing: 16) {
                             // Name Input
-                            VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 6) {
                                 Text("FULL LEGAL NAME")
-                                    .font(.caption.bold())
+                                    .font(.system(size: 10, weight: .bold))
                                     .foregroundStyle(.white.opacity(0.5))
+                                    .padding(.leading, 4)
                                 
-                                TextField("John Doe", text: $fullName)
-                                    .padding()
-                                    .background(Color.white.opacity(0.1))
-                                    .cornerRadius(12)
-                                    .foregroundStyle(.white)
-                                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.1), lineWidth: 1))
+                                HStack {
+                                    Image(systemName: "person.fill")
+                                        .foregroundStyle(.cyan)
+                                    TextField("John Doe", text: $fullName)
+                                        .foregroundStyle(.white)
+                                        .tint(.cyan)
+                                }
+                                .padding(14)
+                                .background(Color.white.opacity(0.05))
+                                .cornerRadius(14)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14)
+                                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                )
                             }
                             
                             // ID Upload
-                            VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 6) {
                                 Text("GOVERNMENT ID")
-                                    .font(.caption.bold())
+                                    .font(.system(size: 10, weight: .bold))
                                     .foregroundStyle(.white.opacity(0.5))
+                                    .padding(.leading, 4)
                                 
                                 PhotosPicker(selection: $selectedItem, matching: .images) {
                                     ZStack {
                                         RoundedRectangle(cornerRadius: 16)
                                             .fill(Color.white.opacity(0.05))
-                                            .frame(height: 180)
+                                            .frame(height: 130)
                                             .overlay(
                                                 RoundedRectangle(cornerRadius: 16)
-                                                    .stroke(style: StrokeStyle(lineWidth: 2, dash: [10]))
+                                                    .stroke(style: StrokeStyle(lineWidth: 1, dash: [6]))
                                                     .foregroundStyle(selectedImage == nil ? Color.white.opacity(0.3) : Color.cyan)
                                             )
                                         
@@ -102,78 +104,67 @@ struct VerificationView: View {
                                             Image(uiImage: image)
                                                 .resizable()
                                                 .scaledToFill()
-                                                .frame(height: 180)
+                                                .frame(height: 130)
                                                 .clipShape(RoundedRectangle(cornerRadius: 16))
-                                                .opacity(0.8)
-                                            
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .font(.largeTitle)
-                                                .foregroundStyle(.white)
-                                                .shadow(radius: 5)
+                                                .overlay(
+                                                    RoundedRectangle(cornerRadius: 16)
+                                                        .stroke(Color.cyan, lineWidth: 1)
+                                                )
                                         } else {
-                                            VStack(spacing: 12) {
-                                                Image(systemName: "doc.text.viewfinder")
-                                                    .font(.system(size: 40))
+                                            VStack(spacing: 8) {
+                                                Image(systemName: "doc.viewfinder.fill")
+                                                    .font(.system(size: 28))
+                                                    .foregroundStyle(.white.opacity(0.8))
                                                 Text("Tap to upload photo")
-                                                    .font(.headline)
+                                                    .font(.caption)
+                                                    .foregroundStyle(.white.opacity(0.5))
                                             }
-                                            .foregroundStyle(.white.opacity(0.5))
                                         }
                                     }
                                 }
                             }
                         }
-                        .padding(.horizontal, 24)
+                        .padding(.horizontal, 20)
                         
-                        Spacer(minLength: 40)
+                        Spacer(minLength: 100) // Ensures scroll space so button doesn't block content
                     }
                 }
-                
-                // Bottom Button (iOS 26 Style)
-                VStack {
-                    if isSuccess {
-                        Button(action: { dismiss() }) {
-                            Text("Verification Pending")
-                                .font(.headline.bold())
-                                .foregroundStyle(.white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 56)
-                                .background(Color.green)
-                                .clipShape(Capsule())
-                        }
-                        .disabled(true)
-                    } else {
-                        Button(action: submitVerification) {
-                            HStack {
-                                if isSubmitting {
-                                    ProgressView().tint(.black)
-                                } else {
-                                    Text("Submit for Review")
-                                        .font(.headline.bold())
-                                        .foregroundStyle(.black)
-                                }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 56)
-                            .background(canSubmit ? Color.cyan : Color.white.opacity(0.2))
-                            .clipShape(Capsule())
-                            .shadow(color: canSubmit ? .cyan.opacity(0.5) : .clear, radius: 10, y: 5)
-                        }
-                        .disabled(!canSubmit || isSubmitting)
-                    }
-                }
-                .padding(24)
-                .background(.ultraThinMaterial)
-                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 24, topTrailingRadius: 24))
+                .scrollDismissesKeyboard(.interactively)
             }
+            
+            // 4. Floating Action Button (Pinned to Bottom)
+            VStack {
+                Spacer()
+                Button(action: submitVerification) {
+                    ZStack {
+                        if isSubmitting {
+                            ProgressView().tint(.black)
+                        } else {
+                            Text(isSuccess ? "Request Sent" : "Submit Request")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(isSuccess ? .white : .black)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 54)
+                    .background(isSuccess ? Color.green : (isValid ? Color.cyan : Color.white.opacity(0.1)))
+                    .clipShape(Capsule())
+                    .shadow(color: isValid ? .cyan.opacity(0.3) : .clear, radius: 10, y: 5)
+                }
+                .disabled(!isValid || isSubmitting || isSuccess)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
+            }
+            .ignoresSafeArea(.keyboard)
         }
+        // This enables the little grey "drag bar" at the top automatically
+        .presentationDragIndicator(.visible)
+        .presentationDetents([.large])
         .onChange(of: selectedItem) { newItem in
             Task {
                 if let data = try? await newItem?.loadTransferable(type: Data.self),
                    let image = UIImage(data: data) {
-                    await MainActor.run {
-                        withAnimation { selectedImage = image }
-                    }
+                    await MainActor.run { selectedImage = image }
                 }
             }
         }
@@ -181,58 +172,23 @@ struct VerificationView: View {
     
     // MARK: - Logic
     
-    var canSubmit: Bool {
-        return !fullName.isEmpty && selectedImage != nil
+    var isValid: Bool {
+        !fullName.isEmpty && selectedImage != nil
     }
     
     func submitVerification() {
+        Haptics.shared.playMedium()
         isSubmitting = true
         
-        Task {
-            // Mock Network Delay
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        // Simulate API Processing
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            isSubmitting = false
+            isSuccess = true
+            Haptics.shared.playSuccess()
             
-            await userManager.markAsVerified()
-            
-            await MainActor.run {
-                isSubmitting = false
-                isSuccess = true
-                Haptics.shared.playSuccess()
-                
-                // Auto dismiss after brief success state
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    dismiss()
-                }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                dismiss()
             }
         }
-    }
-}
-
-// Helper shape for iOS 26 bottom sheets
-struct UnevenRoundedRectangle: Shape {
-    var topLeadingRadius: CGFloat = 0
-    var bottomLeadingRadius: CGFloat = 0
-    var bottomTrailingRadius: CGFloat = 0
-    var topTrailingRadius: CGFloat = 0
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-
-        let tl = topLeadingRadius
-        let tr = topTrailingRadius
-        let bl = bottomLeadingRadius
-        let br = bottomTrailingRadius
-
-        path.move(to: CGPoint(x: rect.minX + tl, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.maxX - tr, y: rect.minY))
-        path.addArc(center: CGPoint(x: rect.maxX - tr, y: rect.minY + tr), radius: tr, startAngle: Angle(degrees: -90), endAngle: Angle(degrees: 0), clockwise: false)
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - br))
-        path.addArc(center: CGPoint(x: rect.maxX - br, y: rect.maxY - br), radius: br, startAngle: Angle(degrees: 0), endAngle: Angle(degrees: 90), clockwise: false)
-        path.addLine(to: CGPoint(x: rect.minX + bl, y: rect.maxY))
-        path.addArc(center: CGPoint(x: rect.minX + bl, y: rect.maxY - bl), radius: bl, startAngle: Angle(degrees: 90), endAngle: Angle(degrees: 180), clockwise: false)
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + tl))
-        path.addArc(center: CGPoint(x: rect.minX + tl, y: rect.minY + tl), radius: tl, startAngle: Angle(degrees: 180), endAngle: Angle(degrees: 270), clockwise: false)
-
-        return path
     }
 }

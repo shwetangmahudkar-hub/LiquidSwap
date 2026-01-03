@@ -26,39 +26,51 @@ struct MakeOfferView: View {
         GridItem(.flexible())
     ]
     
+    // ✨ LOGIC: Identify items already in active trades
+    // Prevents double-booking items (Rule 4 & 7)
+    var busyItemIds: Set<UUID> {
+        guard let myId = userManager.currentUser?.id else { return [] }
+        var ids = Set<UUID>()
+        
+        for trade in tradeManager.activeTrades {
+            // Case 1: I sent the offer (Pending or Accepted)
+            if trade.senderId == myId && ["pending", "accepted"].contains(trade.status) {
+                ids.insert(trade.offeredItemId)
+                trade.additionalOfferedItemIds.forEach { ids.insert($0) }
+            }
+            
+            // Case 2: I received an offer AND Accepted it
+            if trade.receiverId == myId && trade.status == "accepted" {
+                ids.insert(trade.wantedItemId)
+                trade.additionalWantedItemIds.forEach { ids.insert($0) }
+            }
+        }
+        return ids
+    }
+    
     var body: some View {
         ZStack {
             // 1. Background
             LiquidBackground()
                 .opacity(0.6)
+                .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // 2. Custom Header
-                HStack {
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.6))
-                            .frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Circle())
-                    }
-                    
-                    Spacer()
+                // 2. Minimalist Header (Rule 4: No Close Button)
+                VStack(spacing: 12) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.2))
+                        .frame(width: 40, height: 4)
+                        .padding(.top, 10)
                     
                     Text("Build Your Offer")
                         .font(.system(size: 18, weight: .heavy, design: .rounded))
                         .foregroundStyle(.white)
                         .shadow(color: .cyan.opacity(0.5), radius: 10)
-                    
-                    Spacer()
-                    Color.clear.frame(width: 44, height: 44)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 20)
-                .padding(.bottom, 10)
+                .padding(.bottom, 20)
                 
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     VStack(spacing: 24) {
                         
                         // 3. TARGET ITEM
@@ -71,7 +83,7 @@ struct MakeOfferView: View {
                             HStack(spacing: 16) {
                                 AsyncImageView(filename: targetItem.imageUrl)
                                     .scaledToFill()
-                                    .frame(width: 80, height: 80)
+                                    .frame(width: 70, height: 70)
                                     .clipShape(RoundedRectangle(cornerRadius: 16))
                                     .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.2), lineWidth: 1))
                                 
@@ -98,6 +110,7 @@ struct MakeOfferView: View {
                             .padding(16)
                             .background(.ultraThinMaterial)
                             .clipShape(RoundedRectangle(cornerRadius: 20))
+                            .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.1), lineWidth: 1))
                         }
                         
                         // 4. YOUR INVENTORY
@@ -109,9 +122,15 @@ struct MakeOfferView: View {
                                 
                                 Spacer()
                                 
-                                Text("\(selectedItemIds.count) Selected")
-                                    .font(.caption.bold())
-                                    .foregroundStyle(.white.opacity(0.6))
+                                if !selectedItemIds.isEmpty {
+                                    Text("\(selectedItemIds.count) Selected")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.white.opacity(0.8))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.purple.opacity(0.2))
+                                        .clipShape(Capsule())
+                                }
                             }
                             .padding(.horizontal, 8)
                             
@@ -129,14 +148,37 @@ struct MakeOfferView: View {
                                 .background(.ultraThinMaterial)
                                 .cornerRadius(20)
                             } else {
-                                LazyVGrid(columns: gridColumns, spacing: 12) {
+                                LazyVGrid(columns: gridColumns, spacing: 16) {
                                     ForEach(userManager.userItems) { item in
-                                        SelectableItemCard(
-                                            item: item,
-                                            isSelected: selectedItemIds.contains(item.id)
-                                        ) {
-                                            toggleSelection(item)
+                                        let isBusy = busyItemIds.contains(item.id)
+                                        
+                                        Button(action: {
+                                            if !isBusy {
+                                                toggleSelection(item)
+                                            } else {
+                                                Haptics.shared.playError()
+                                            }
+                                        }) {
+                                            InventoryItemCard(item: item, isSelected: selectedItemIds.contains(item.id))
+                                                // ✨ BUSY OVERLAY (Consistent with QuickOffer)
+                                                .overlay(
+                                                    ZStack {
+                                                        if isBusy {
+                                                            Color.black.opacity(0.6)
+                                                                .cornerRadius(16)
+                                                            VStack(spacing: 4) {
+                                                                Image(systemName: "lock.fill")
+                                                                Text("PENDING")
+                                                                    .font(.system(size: 10, weight: .black))
+                                                            }
+                                                            .foregroundStyle(.white.opacity(0.8))
+                                                        }
+                                                    }
+                                                )
+                                                .saturation(isBusy ? 0 : 1)
                                         }
+                                        .buttonStyle(.plain)
+                                        .disabled(isBusy)
                                     }
                                 }
                             }
@@ -144,7 +186,7 @@ struct MakeOfferView: View {
                         
                         // 5. TRADE NOTE
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("MESSAGE TO SELLER (OPTIONAL)")
+                            Text("MESSAGE (OPTIONAL)")
                                 .font(.system(size: 10, weight: .black))
                                 .foregroundStyle(.white.opacity(0.5))
                                 .padding(.horizontal, 8)
@@ -152,32 +194,32 @@ struct MakeOfferView: View {
                             TextField("Add a note about this trade...", text: $tradeNote, axis: .vertical)
                                 .lineLimit(3...6)
                                 .padding(16)
-                                .background(.ultraThinMaterial)
-                                .clipShape(RoundedRectangle(cornerRadius: 20))
+                                .background(Color.black.opacity(0.2))
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                )
                                 .foregroundStyle(.white)
                                 .tint(.cyan)
                         }
                         
-                        Spacer(minLength: 100)
+                        Spacer(minLength: 120)
                     }
                     .padding(20)
                 }
             }
             
-            // 6. BOTTOM ACTION BAR
+            // 6. BOTTOM ACTION BAR (Floating)
             VStack {
                 Spacer()
                 VStack(spacing: 0) {
+                    // Summary Line
                     if !selectedItemIds.isEmpty {
-                        HStack {
-                            Text("Trading")
+                        HStack(spacing: 4) {
+                            Text("Offering")
                                 .foregroundStyle(.white.opacity(0.6))
                             Text("\(selectedItemIds.count) items")
-                                .bold()
-                                .foregroundStyle(.white)
-                            Text("for")
-                                .foregroundStyle(.white.opacity(0.6))
-                            Text("1 item")
                                 .bold()
                                 .foregroundStyle(.white)
                         }
@@ -199,8 +241,8 @@ struct MakeOfferView: View {
                                 HStack {
                                     Text("Send Offer")
                                         .font(.headline.bold())
-                                    Image(systemName: "arrow.up.circle.fill")
-                                        .font(.title3)
+                                    Image(systemName: "paperplane.fill")
+                                        .font(.subheadline)
                                 }
                                 .foregroundStyle(isValid ? .black : .white.opacity(0.3))
                             }
@@ -208,11 +250,10 @@ struct MakeOfferView: View {
                     }
                     .disabled(!isValid || isSending)
                 }
-                .padding(20)
+                .padding(24)
                 .background(
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .mask(LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .bottom, endPoint: .top))
+                    LinearGradient(colors: [.black.opacity(0), .black.opacity(0.9)], startPoint: .top, endPoint: .bottom)
+                        .ignoresSafeArea()
                 )
             }
         }
@@ -267,56 +308,5 @@ struct MakeOfferView: View {
                 }
             }
         }
-    }
-}
-
-// Subview for Item Cards
-struct SelectableItemCard: View {
-    let item: TradeItem
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            ZStack(alignment: .topTrailing) {
-                VStack(spacing: 0) {
-                    AsyncImageView(filename: item.imageUrl)
-                        .scaledToFill()
-                        .frame(height: 110)
-                        .clipped()
-                        .overlay(Color.black.opacity(isSelected ? 0.2 : 0))
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title)
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                        
-                        Text(item.category)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.white.opacity(0.6))
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.ultraThinMaterial)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(isSelected ? Color.purple : Color.white.opacity(0.1), lineWidth: isSelected ? 2 : 1)
-                )
-                
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.purple)
-                        .background(Circle().fill(.white))
-                        .padding(8)
-                }
-            }
-            .scaleEffect(isSelected ? 0.96 : 1.0)
-            .animation(.spring(response: 0.3), value: isSelected)
-        }
-        .buttonStyle(.plain)
     }
 }

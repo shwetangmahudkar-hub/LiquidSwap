@@ -29,28 +29,29 @@ struct ProductDetailView: View {
             LiquidBackground()
             
             // 2. Main Content ScrollView
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
                     // Content Body
                     VStack(alignment: .leading, spacing: 24) {
                         
-                        // Header Spacing for the floating bar
-                        Spacer().frame(height: 80)
+                        // Header Spacing for the image
+                        Spacer().frame(height: 20)
                         
                         // Header Info & Thumbnail
                         HStack(alignment: .top, spacing: 16) {
                             AsyncImageView(filename: item.imageUrl)
                                 .scaledToFill()
-                                .frame(width: 90, height: 90)
-                                .clipShape(RoundedRectangle(cornerRadius: 20))
-                                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.2), lineWidth: 1))
-                                .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 5)
+                                .frame(width: 100, height: 100)
+                                .clipShape(RoundedRectangle(cornerRadius: 24))
+                                .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.1), lineWidth: 1))
+                                .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
                             
-                            VStack(alignment: .leading, spacing: 6) {
+                            VStack(alignment: .leading, spacing: 8) {
                                 Text(item.title)
-                                    .font(.system(size: 22, weight: .heavy, design: .rounded))
+                                    .font(.system(size: 24, weight: .heavy, design: .rounded))
                                     .foregroundStyle(.white)
                                     .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 
                                 HStack(spacing: 8) {
                                     StatusPill(text: item.condition.uppercased(), color: conditionColor(item.condition))
@@ -62,6 +63,7 @@ struct ProductDetailView: View {
                                         .padding(.vertical, 4)
                                         .background(.ultraThinMaterial)
                                         .clipShape(Capsule())
+                                        .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 1))
                                 }
                             }
                             Spacer()
@@ -78,20 +80,23 @@ struct ProductDetailView: View {
                                         if let url = ownerProfile?.avatarUrl {
                                             AsyncImageView(filename: url)
                                                 .scaledToFill()
-                                                .frame(width: 56, height: 56)
+                                                .frame(width: 50, height: 50)
                                                 .clipShape(Circle())
                                         } else {
                                             Image(systemName: "person.circle.fill")
                                                 .resizable()
                                                 .foregroundStyle(.white.opacity(0.3))
-                                                .frame(width: 56, height: 56)
+                                                .frame(width: 50, height: 50)
                                         }
                                         
-                                        if isLoadingOwner {
-                                            ProgressView().tint(.white)
-                                        }
+                                        // Rank Ring
+                                        Circle()
+                                            .strokeBorder(
+                                                AngularGradient(colors: [.cyan, .purple, .cyan], center: .center),
+                                                lineWidth: 2
+                                            )
+                                            .frame(width: 56, height: 56)
                                     }
-                                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
                                     
                                     VStack(alignment: .leading, spacing: 4) {
                                         HStack(spacing: 4) {
@@ -99,7 +104,7 @@ struct ProductDetailView: View {
                                                 .font(.headline)
                                                 .foregroundStyle(.white)
                                             
-                                            if ownerProfile?.isVerified == true {
+                                            if ownerProfile?.isVerified == true || item.ownerIsVerified == true {
                                                 Image(systemName: "checkmark.seal.fill")
                                                     .foregroundStyle(.cyan)
                                                     .font(.caption)
@@ -113,7 +118,7 @@ struct ProductDetailView: View {
                                             Text(String(format: "%.1f", ownerRating))
                                                 .font(.subheadline).bold()
                                                 .foregroundStyle(.white.opacity(0.9))
-                                            Text("• View Profile")
+                                            Text("• \(ownerProfile?.completedTradeCount ?? item.ownerTradeCount ?? 0) Trades")
                                                 .font(.caption)
                                                 .foregroundStyle(.white.opacity(0.5))
                                         }
@@ -126,7 +131,6 @@ struct ProductDetailView: View {
                             }
                         }
                         .buttonStyle(.plain)
-                        .disabled(isLoadingOwner)
                         
                         // Description
                         VStack(alignment: .leading, spacing: 12) {
@@ -137,43 +141,49 @@ struct ProductDetailView: View {
                             Text(item.description)
                                 .font(.body)
                                 .foregroundStyle(.white.opacity(0.8))
-                                .lineSpacing(6)
+                                .lineSpacing(5)
                         }
                         
                         // Location Preview
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
-                                Label("Location", systemImage: "mappin.and.ellipse")
+                                Label("Approximate Location", systemImage: "mappin.and.ellipse")
                                     .font(.headline)
                                     .foregroundStyle(.cyan)
                                 Spacer()
+                                
+                                // ✨ FIXED: Accessed directly without if-let
                                 Text("\(String(format: "%.1f", item.distance)) km away")
                                     .font(.subheadline)
                                     .foregroundStyle(.white.opacity(0.6))
                             }
                             
-                            // Map Snapshot
-                            ZStack(alignment: .bottomTrailing) {
-                                Map(coordinateRegion: .constant(MKCoordinateRegion(
-                                    center: CLLocationCoordinate2D(latitude: item.latitude ?? 0, longitude: item.longitude ?? 0),
-                                    span: MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
-                                )))
-                                .disabled(true)
-                                .overlay(Color.black.opacity(0.2)) // Slight dark overlay for theme
-                                
-                                // Open Maps Button Overlay
-                                Button(action: { openInMaps() }) {
-                                    Image(systemName: "arrow.triangle.turn.up.right.circle.fill")
-                                        .font(.system(size: 44))
-                                        .foregroundStyle(.cyan)
-                                        .background(Circle().fill(.white).padding(2))
-                                        .shadow(radius: 5)
+                            // Map Snapshot (Static for Performance)
+                            if let lat = item.latitude, let lon = item.longitude {
+                                ZStack(alignment: .bottomTrailing) {
+                                    Map(coordinateRegion: .constant(MKCoordinateRegion(
+                                        center: CLLocationCoordinate2D(latitude: lat, longitude: lon),
+                                        span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                                    )))
+                                    .disabled(true)
+                                    .overlay(Color.black.opacity(0.3))
+                                    
+                                    // Open Maps Button
+                                    Button(action: { openInMaps() }) {
+                                        Image(systemName: "location.fill")
+                                            .font(.system(size: 20))
+                                            .foregroundStyle(.white)
+                                            .padding(12)
+                                            .background(.ultraThinMaterial)
+                                            .clipShape(Circle())
+                                            .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
+                                    }
+                                    .padding(16)
                                 }
-                                .padding(12)
+                                .frame(height: 160)
+                                .cornerRadius(24)
+                                .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.1), lineWidth: 1))
                             }
-                            .frame(height: 180)
-                            .cornerRadius(24)
-                            .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.2), lineWidth: 1))
                         }
                         
                         Spacer(minLength: 140) // Clearance for bottom bar
@@ -183,34 +193,33 @@ struct ProductDetailView: View {
             }
             .ignoresSafeArea(edges: .top)
             
-            // 3. Custom Floating Glass Header (Replaces Toolbar)
+            // 3. Header Action Buttons (No Back Button - Swipe Down Only)
             VStack {
-                HStack(spacing: 12) {
-                    Button(action: { dismiss() }) {
-                        GlassNavButton(icon: "arrow.left")
-                    }
-                    
+                // Grabber Handle
+                Capsule()
+                    .fill(Color.white.opacity(0.2))
+                    .frame(width: 40, height: 4)
+                    .padding(.top, 12)
+                
+                HStack {
                     Spacer()
                     
+                    // Share
                     Button(action: { showShareSheet = true }) {
                         GlassNavButton(icon: "square.and.arrow.up")
                     }
                     
+                    // Report
                     Button(action: { showReportActionSheet = true }) {
-                        GlassNavButton(icon: "flag.fill", color: .red.opacity(0.9))
+                        GlassNavButton(icon: "flag.fill", color: .red.opacity(0.8))
                     }
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 50) // Approximate safe area
-                .padding(.bottom, 12)
-                .background(
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .mask(LinearGradient(colors: [.black.opacity(1), .black.opacity(0)], startPoint: .top, endPoint: .bottom))
-                )
+                .padding(.top, 10)
+                
                 Spacer()
             }
-            .ignoresSafeArea()
+            .allowsHitTesting(true)
             
             // 4. Floating Bottom Action Bar
             floatingActionBar
@@ -253,69 +262,91 @@ struct ProductDetailView: View {
     var floatingActionBar: some View {
         VStack {
             Spacer()
-            HStack(spacing: 12) {
-                // Chat Button
+            HStack(spacing: 16) {
+                // Chat Button (Secondary)
                 Button(action: { showChatAlert = true }) {
-                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                    Image(systemName: "bubble.left.fill")
                         .font(.system(size: 20))
                         .foregroundStyle(.white)
                         .frame(width: 56, height: 56)
                         .background(.ultraThinMaterial)
                         .clipShape(Circle())
-                        .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.1), radius: 5)
+                        .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 1))
                 }
                 
-                // Make Offer Button
-                if offerAlreadyPending {
-                    Text("Offer Pending")
-                        .font(.headline)
-                        .foregroundStyle(.white.opacity(0.6))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 56)
-                        .background(Color.gray.opacity(0.3))
-                        .clipShape(Capsule())
-                } else {
-                    Button(action: {
+                // Make Offer Button (Primary)
+                Button(action: {
+                    if !offerAlreadyPending {
                         Haptics.shared.playMedium()
                         showOfferSheet = true
-                    }) {
-                        HStack {
-                            Text("Make an Offer")
-                                .font(.headline.bold())
-                            Image(systemName: "arrow.right")
-                                .font(.headline.bold())
-                        }
-                        .foregroundStyle(.black)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 56)
-                        .background(Color.cyan)
-                        .clipShape(Capsule())
-                        .shadow(color: .cyan.opacity(0.4), radius: 10, y: 5)
                     }
+                }) {
+                    HStack {
+                        if offerAlreadyPending {
+                            Image(systemName: "checkmark.circle.fill")
+                            Text("Offer Pending")
+                        } else {
+                            Text("Make an Offer")
+                            Image(systemName: "arrow.right")
+                        }
+                    }
+                    .font(.headline.bold())
+                    .foregroundStyle(offerAlreadyPending ? .white.opacity(0.6) : .black)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 56)
+                    .background(offerAlreadyPending ? Color.gray.opacity(0.3) : Color.cyan)
+                    .clipShape(Capsule())
+                    .shadow(color: offerAlreadyPending ? .clear : .cyan.opacity(0.4), radius: 10, y: 5)
                 }
+                .disabled(offerAlreadyPending)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 34) // Thumb Friendly Padding
             .padding(.top, 20)
             .background(
-                Rectangle()
-                    .fill(.ultraThinMaterial)
+                LiquidBackground()
+                    .opacity(0.95)
                     .mask(LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .bottom, endPoint: .top))
-                    .ignoresSafeArea()
+                    .blur(radius: 10)
             )
         }
+        .ignoresSafeArea()
     }
     
-    // MARK: - Logic (Unchanged)
+    // MARK: - Logic (Optimized)
     
     func loadData() {
         checkIfOfferPending()
+        
+        // 📉 COST OPTIMIZATION: Use data we already have from Feed
+        if let username = item.ownerUsername {
+            self.ownerProfile = UserProfile(
+                id: item.ownerId,
+                username: username,
+                bio: "",
+                location: "",
+                avatarUrl: nil,
+                isoCategories: [],
+                isVerified: item.ownerIsVerified ?? false,
+                isPremium: item.ownerIsPremium ?? false
+            )
+            // Still set rating if available
+            if let rating = item.ownerRating {
+                self.ownerRating = rating
+                self.isLoadingOwner = false
+                return // Exit early! No network call needed.
+            }
+        }
+        
+        // Fallback: Only fetch from server if data is missing
         Task {
             isLoadingOwner = true
             do {
-                let profile = try await DatabaseService.shared.fetchProfile(userId: item.ownerId)
-                let rating = try await DatabaseService.shared.fetchUserRating(userId: item.ownerId)
+                async let profileTask = DatabaseService.shared.fetchProfile(userId: item.ownerId)
+                async let ratingTask = DatabaseService.shared.fetchUserRating(userId: item.ownerId)
+                
+                let (profile, rating) = try await (profileTask, ratingTask)
+                
                 await MainActor.run {
                     self.ownerProfile = profile
                     self.ownerRating = rating
@@ -329,6 +360,7 @@ struct ProductDetailView: View {
     
     func checkIfOfferPending() {
         Task {
+            // This is a quick DB check, essential for logic
             let exists = await TradeManager.shared.hasPendingOffer(for: item.id)
             await MainActor.run { withAnimation { self.offerAlreadyPending = exists } }
         }
@@ -382,7 +414,6 @@ struct StatusPill: View {
     }
 }
 
-// Updated Glass Navigation Button
 struct GlassNavButton: View {
     let icon: String
     var color: Color = .white
@@ -394,7 +425,6 @@ struct GlassNavButton: View {
             .frame(width: 44, height: 44)
             .background(.ultraThinMaterial)
             .clipShape(Circle())
-            // Subtle glowing border effect
             .overlay(
                 Circle()
                     .stroke(LinearGradient(colors: [color.opacity(0.3), Color.white.opacity(0.1)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)

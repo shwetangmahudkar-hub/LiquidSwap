@@ -4,6 +4,7 @@ struct CounterOfferSheet: View {
     let originalTrade: TradeOffer
     @Environment(\.dismiss) var dismiss
     @ObservedObject var userManager = UserManager.shared
+    @ObservedObject var tradeManager = TradeManager.shared
     
     // Inventory State
     @State private var theirItems: [TradeItem] = []
@@ -27,6 +28,29 @@ struct CounterOfferSheet: View {
         return userManager.currentUser?.isPremium ?? false
     }
     
+    // ✨ LOGIC: Identify items already in active trades (Prevent Double Booking)
+    var busyItemIds: Set<UUID> {
+        guard let myId = userManager.currentUser?.id else { return [] }
+        var ids = Set<UUID>()
+        
+        for trade in tradeManager.activeTrades {
+            // Exclude the CURRENT trade being negotiated from "Busy" check
+            if trade.id == originalTrade.id { continue }
+            
+            // Case 1: I sent the offer
+            if trade.senderId == myId && ["pending", "accepted"].contains(trade.status) {
+                ids.insert(trade.offeredItemId)
+                trade.additionalOfferedItemIds.forEach { ids.insert($0) }
+            }
+            // Case 2: I accepted an offer
+            if trade.receiverId == myId && trade.status == "accepted" {
+                ids.insert(trade.wantedItemId)
+                trade.additionalWantedItemIds.forEach { ids.insert($0) }
+            }
+        }
+        return ids
+    }
+    
     var body: some View {
         ZStack {
             // 1. Background
@@ -36,41 +60,27 @@ struct CounterOfferSheet: View {
                 .blur(radius: 40)
             
             VStack(spacing: 0) {
-                // --- HEADER ---
-                HStack {
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.6))
-                            .frame(width: 44, height: 44)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Circle())
-                    }
+                // --- HEADER (Rule 4: No Close Button, just Grabber) ---
+                VStack(spacing: 8) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.2))
+                        .frame(width: 40, height: 4)
+                        .padding(.top, 12)
                     
-                    Spacer()
-                    
-                    VStack(spacing: 4) {
+                    HStack(spacing: 6) {
                         Text("Negotiation")
                             .font(.system(size: 18, weight: .heavy, design: .rounded))
                             .foregroundStyle(.white)
                         
                         if isPremium {
-                            Text("PREMIUM UNLOCKED")
-                                .font(.system(size: 8, weight: .black))
-                                .foregroundStyle(.black)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.yellow)
-                                .clipShape(Capsule())
+                            Image(systemName: "crown.fill")
+                                .font(.caption)
+                                .foregroundStyle(.yellow)
                         }
                     }
                     .shadow(color: .cyan.opacity(0.5), radius: 10)
-                    
-                    Spacer()
-                    Color.clear.frame(width: 44, height: 44)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 24)
+                .padding(.bottom, 20)
                 
                 // --- TAB SWITCHER ---
                 HStack(spacing: 0) {
@@ -87,7 +97,7 @@ struct CounterOfferSheet: View {
                 .clipShape(Capsule())
                 .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 1))
                 .padding(.horizontal, 40)
-                .padding(.vertical, 24)
+                .padding(.bottom, 24)
                 
                 // --- INVENTORY SCROLL VIEWS ---
                 TabView(selection: $activeTab) {
@@ -95,11 +105,19 @@ struct CounterOfferSheet: View {
                     // 1. THEIR ITEMS (What I want)
                     ScrollView(showsIndicators: false) {
                         if isLoading {
-                            ProgressView().tint(.cyan).padding(50)
+                            VStack {
+                                ProgressView().tint(.cyan)
+                                Text("Loading their inventory...")
+                                    .font(.caption)
+                                    .foregroundStyle(.white.opacity(0.5))
+                            }
+                            .padding(50)
                         } else {
+                            // "Their" items are never "Busy" for me locally (I don't know their trades)
                             ItemGrid(
                                 items: theirItems,
                                 selectedIds: $selectedTheirIds,
+                                busyIds: [], // Empty for them
                                 tint: .cyan,
                                 limitReached: !isPremium && selectedTheirIds.count >= 1,
                                 onLimitTriggered: { showPremiumPaywall = true }
@@ -113,6 +131,7 @@ struct CounterOfferSheet: View {
                         ItemGrid(
                             items: userManager.userItems,
                             selectedIds: $selectedMyIds,
+                            busyIds: busyItemIds, // ✨ Apply busy check here
                             tint: .purple,
                             limitReached: !isPremium && selectedMyIds.count >= 1,
                             onLimitTriggered: { showPremiumPaywall = true }
@@ -164,7 +183,7 @@ struct CounterOfferSheet: View {
                             } else {
                                 HStack {
                                     Text("Send Counter Proposal")
-                                        .font(.system(size: 18, weight: .bold))
+                                        .font(.system(size: 16, weight: .bold))
                                     Image(systemName: "arrow.counterclockwise")
                                         .font(.system(size: 16))
                                 }
@@ -189,7 +208,6 @@ struct CounterOfferSheet: View {
             loadContext()
         }
         .sheet(isPresented: $showPremiumPaywall) {
-            // Ensure PremiumUpgradeSheet exists in your project, or replace with placeholder
             PremiumUpgradeSheet()
                 .presentationDetents([.fraction(0.6)])
         }
@@ -208,12 +226,13 @@ struct CounterOfferSheet: View {
         Task {
             isLoading = true
             
+            // Only fetch if we don't have them (though for counter offer, we usually need fresh inventory)
             if let items = try? await DatabaseService.shared.fetchUserItems(userId: originalTrade.senderId) {
                 await MainActor.run { self.theirItems = items }
             }
             
             await MainActor.run {
-                // Pre-fill logic (Role Reversal)
+                // Pre-fill logic (Swap sides for context)
                 self.selectedTheirIds.insert(originalTrade.offeredItemId)
                 originalTrade.additionalOfferedItemIds.forEach { self.selectedTheirIds.insert($0) }
                 
@@ -258,21 +277,25 @@ struct CounterOfferSheet: View {
 struct ItemGrid: View {
     let items: [TradeItem]
     @Binding var selectedIds: Set<UUID>
+    let busyIds: Set<UUID> // ✨ Passed in
     let tint: Color
     
     // Premium Limits
     let limitReached: Bool
     let onLimitTriggered: () -> Void
     
-    var mutualMatchId: UUID? = nil
-    
     var body: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
             ForEach(items, id: \.id) { item in
                 let isSelected = selectedIds.contains(item.id)
-                let isMutual = (item.id == mutualMatchId)
+                let isBusy = busyIds.contains(item.id)
                 
                 Button(action: {
+                    if isBusy {
+                        Haptics.shared.playError()
+                        return
+                    }
+                    
                     if isSelected {
                         selectedIds.remove(item.id)
                         Haptics.shared.playLight()
@@ -293,7 +316,7 @@ struct ItemGrid: View {
                                 .scaledToFill()
                                 .frame(height: 150)
                                 .clipped()
-                                .overlay(Color.black.opacity(isSelected ? 0.3 : 0))
+                                .overlay(Color.black.opacity(isSelected || isBusy ? 0.3 : 0))
                             
                             HStack {
                                 VStack(alignment: .leading) {
@@ -326,8 +349,26 @@ struct ItemGrid: View {
                                 .padding(10)
                         }
                         
-                        // Lock Badge
-                        if !isSelected && limitReached {
+                        // ✨ Busy/Pending Overlay
+                        if isBusy && !isSelected {
+                            VStack {
+                                Spacer()
+                                HStack {
+                                    Image(systemName: "lock.fill")
+                                        .font(.caption)
+                                    Text("PENDING")
+                                        .font(.system(size: 8, weight: .black))
+                                }
+                                .padding(6)
+                                .background(Color.black.opacity(0.6))
+                                .cornerRadius(8)
+                                .padding(8)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        }
+                        
+                        // Limit Lock Badge (Only if not busy)
+                        if !isSelected && !isBusy && limitReached {
                             Image(systemName: "lock.fill")
                                 .font(.headline)
                                 .foregroundStyle(.white)
@@ -335,23 +376,10 @@ struct ItemGrid: View {
                                 .background(Circle().fill(.black.opacity(0.6)))
                                 .padding(10)
                         }
-                        
-                        if isMutual {
-                            VStack {
-                                Spacer()
-                                HStack {
-                                    Image(systemName: "heart.fill")
-                                        .foregroundStyle(.pink)
-                                    Text("THEY WANT THIS")
-                                        .font(.system(size: 8, weight: .black))
-                                        .foregroundStyle(.white)
-                                    Spacer()
-                                }
-                                .padding(6)
-                                .background(Color.black.opacity(0.6))
-                            }
-                        }
                     }
+                    // Grayscale busy items
+                    .saturation(isBusy ? 0 : 1)
+                    .opacity(isBusy ? 0.6 : 1)
                 }
                 .buttonStyle(.plain)
             }
@@ -361,7 +389,7 @@ struct ItemGrid: View {
     }
 }
 
-// MARK: - Missing TabPill Component
+// MARK: - TabPill Component
 struct TabPill: View {
     let title: String
     let count: Int
@@ -387,5 +415,6 @@ struct TabPill: View {
             .foregroundStyle(.white)
             .clipShape(Capsule())
         }
+        .buttonStyle(.plain)
     }
 }

@@ -10,8 +10,12 @@ class TradeManager: ObservableObject {
     @Published var interestedItems: [TradeItem] = []
     @Published var incomingOffers: [TradeOffer] = []
     @Published var activeTrades: [TradeOffer] = []
-    @Published var isLoading = false
     
+    // ✨ NEW: Cache profiles for chat list to avoid N+1 queries
+    // Maps UserID -> UserProfile for O(1) lookup in views
+    @Published var relatedProfiles: [UUID: UserProfile] = [:]
+    
+    @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var showError = false
     
@@ -41,18 +45,53 @@ class TradeManager: ObservableObject {
             
             let (interested, rawOffers, rawActive) = try await (interestedResult, offersResult, activeResult)
             
+            // 1. Filter Blocked Users FIRST (Save costs by not hydrating them)
             let filteredOffers = rawOffers.filter { !blockedIDs.contains($0.senderId) }
             let filteredActive = rawActive.filter { trade in
                 let partnerId = (trade.senderId == userId) ? trade.receiverId : trade.senderId
                 return !blockedIDs.contains(partnerId)
             }
             
+            // 2. Hydrate Item Data (✨ BATCH OPTIMIZED)
+            // Fetch all items for all trades in one go
+            let hydratedOffers = await hydrateTrades(filteredOffers)
+            let hydratedActive = await hydrateTrades(filteredActive)
+            
             self.interestedItems = interested
-            self.incomingOffers = await hydrateTrades(filteredOffers)
-            self.activeTrades = await hydrateTrades(filteredActive)
+            self.incomingOffers = hydratedOffers
+            self.activeTrades = hydratedActive
+            
+            // 3. Batch Load Profiles
+            // This fetches all partner avatars/names in one go
+            await loadRelatedProfiles(offers: hydratedOffers, active: hydratedActive, currentUserId: userId)
             
         } catch {
             print("Error loading trades: \(error)")
+        }
+    }
+    
+    // ✨ NEW: Batch Fetch Helper for Profiles
+    private func loadRelatedProfiles(offers: [TradeOffer], active: [TradeOffer], currentUserId: UUID) async {
+        var userIds = Set<UUID>()
+        
+        // Collect all partner IDs
+        let allTrades = offers + active
+        for trade in allTrades {
+            if trade.senderId != currentUserId { userIds.insert(trade.senderId) }
+            if trade.receiverId != currentUserId { userIds.insert(trade.receiverId) }
+        }
+        
+        guard !userIds.isEmpty else { return }
+        
+        do {
+            // Use the batch function in DatabaseService
+            let profiles = try await db.fetchProfiles(userIds: Array(userIds))
+            
+            // Map to dictionary for O(1) lookup
+            self.relatedProfiles = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+            print("✅ TradeManager: Batch loaded \(profiles.count) related profiles.")
+        } catch {
+            print("❌ Failed to batch load profiles: \(error)")
         }
     }
     
@@ -69,47 +108,51 @@ class TradeManager: ObservableObject {
         return try await db.fetchActiveTrades(userId: userId)
     }
     
-    // MARK: - Hydration Logic
-    private func hydrateTrades(_ trades: [TradeOffer]) async -> [TradeOffer] {
-        var result = trades
-        await withTaskGroup(of: (Int, TradeOffer).self) { group in
-            for (index, trade) in trades.enumerated() {
-                group.addTask {
-                    var hydratedTrade = trade
-                    async let offered = try? await self.db.fetchItem(id: trade.offeredItemId)
-                    async let wanted = try? await self.db.fetchItem(id: trade.wantedItemId)
-                    let (offeredItem, wantedItem) = await (offered, wanted)
-                    hydratedTrade.offeredItem = offeredItem
-                    hydratedTrade.wantedItem = wantedItem
-                    
-                    if !trade.additionalOfferedItemIds.isEmpty {
-                        hydratedTrade.additionalOfferedItems = await self.fetchItems(ids: trade.additionalOfferedItemIds)
-                    }
-                    if !trade.additionalWantedItemIds.isEmpty {
-                        hydratedTrade.additionalWantedItems = await self.fetchItems(ids: trade.additionalWantedItemIds)
-                    }
-                    return (index, hydratedTrade)
-                }
-            }
-            for await (index, hydratedTrade) in group {
-                if index < result.count { result[index] = hydratedTrade }
-            }
-        }
-        return result
-    }
+    // MARK: - Hydration Logic (✨ HIGHLY OPTIMIZED)
     
-    nonisolated private func fetchItems(ids: [UUID]) async -> [TradeItem] {
-        if ids.isEmpty { return [] }
-        var items: [TradeItem] = []
-        await withTaskGroup(of: TradeItem?.self) { group in
-            for id in ids {
-                group.addTask { return try? await DatabaseService.shared.fetchItem(id: id) }
-            }
-            for await item in group {
-                if let item = item { items.append(item) }
-            }
+    /// Batches all item IDs from all trades and fetches them in a single network request.
+    /// Replaces the old N+1 loop logic.
+    private func hydrateTrades(_ trades: [TradeOffer]) async -> [TradeOffer] {
+        if trades.isEmpty { return [] }
+        
+        // 1. Collect ALL unique Item IDs involved in these trades
+        var allItemIds = Set<UUID>()
+        for trade in trades {
+            allItemIds.insert(trade.offeredItemId)
+            allItemIds.insert(trade.wantedItemId)
+            trade.additionalOfferedItemIds.forEach { allItemIds.insert($0) }
+            trade.additionalWantedItemIds.forEach { allItemIds.insert($0) }
         }
-        return items
+        
+        // 2. Single DB Call
+        guard !allItemIds.isEmpty else { return trades }
+        
+        do {
+            // Fetch items using the new DatabaseService batch function
+            let fetchedItems = try await db.fetchBatchItems(ids: Array(allItemIds))
+            
+            // Create a lookup map for O(1) access
+            let itemMap = Dictionary(uniqueKeysWithValues: fetchedItems.map { ($0.id, $0) })
+            
+            // 3. Assign items back to trades
+            return trades.map { trade in
+                var hydrated = trade
+                
+                // Hydrate Primary Items
+                hydrated.offeredItem = itemMap[trade.offeredItemId]
+                hydrated.wantedItem = itemMap[trade.wantedItemId]
+                
+                // Hydrate Additional Items
+                hydrated.additionalOfferedItems = trade.additionalOfferedItemIds.compactMap { itemMap[$0] }
+                hydrated.additionalWantedItems = trade.additionalWantedItemIds.compactMap { itemMap[$0] }
+                
+                return hydrated
+            }
+        } catch {
+            print("❌ Hydration Error: \(error)")
+            // Return existing trades (partially unhydrated) rather than crashing
+            return trades
+        }
     }
     
     // MARK: - Realtime
@@ -166,21 +209,17 @@ class TradeManager: ObservableObject {
         } catch { return false }
     }
     
-    // ✨ FIX: Removed unused variable warning
     func sendInquiry(wantedItem: TradeItem) async -> Bool {
-        // 1. Check if we already have an open trade for this item
         if await hasPendingOffer(for: wantedItem.id) {
             print("ℹ️ Trade already exists, skipping creation.")
             return true
         }
         
-        // 2. Select a "Placeholder" Item from my inventory
         guard let placeholderItem = userManager.userItems.first else {
             print("❌ sendInquiry Failed: User has no items to trade.")
             return false
         }
         
-        // 3. Create the Trade Offer
         return await sendOffer(wantedItem: wantedItem, myItem: placeholderItem)
     }
 
@@ -243,23 +282,13 @@ class TradeManager: ObservableObject {
         guard let myId = userManager.currentUser?.id else { return nil }
         do {
             let response: [TradeOffer] = try await client.from("trades").select().in("status", values: ["accepted", "pending", "completed"]).or("and(sender_id.eq.\(myId),receiver_id.eq.\(partnerId)),and(sender_id.eq.\(partnerId),receiver_id.eq.\(myId))").order("created_at", ascending: false).limit(1).execute().value
+            
+            // ✨ OPTIMIZATION: Use the batch hydration logic for this single trade
+            // This reuses code and keeps the logic consistent
             guard let tradeStub = response.first else { return nil }
+            let hydratedTrades = await hydrateTrades([tradeStub])
+            return hydratedTrades.first
             
-            async let offered = try? await self.db.fetchItem(id: tradeStub.offeredItemId)
-            async let wanted = try? await self.db.fetchItem(id: tradeStub.wantedItemId)
-            let (offeredItem, wantedItem) = await (offered, wanted)
-            
-            var fullTrade = tradeStub
-            fullTrade.offeredItem = offeredItem
-            fullTrade.wantedItem = wantedItem
-            
-            if !fullTrade.additionalOfferedItemIds.isEmpty {
-                fullTrade.additionalOfferedItems = await self.fetchItems(ids: fullTrade.additionalOfferedItemIds)
-            }
-            if !fullTrade.additionalWantedItemIds.isEmpty {
-                fullTrade.additionalWantedItems = await self.fetchItems(ids: fullTrade.additionalWantedItemIds)
-            }
-            return fullTrade
         } catch { return nil }
     }
     

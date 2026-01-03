@@ -61,7 +61,7 @@ struct FeedView: View {
                             .zIndex(isTop ? 2 : 1)
                             .offset(y: isTop ? dragOffsetY : 0)
                             .scaleEffect(isTop ? 1.0 : 0.95)
-                            .opacity(isTop ? 1.0 : (dragOffsetY < -50 ? 1.0 : 0.0))
+                            .opacity(isTop ? 1.0 : (dragOffsetY < -50 ? 0.0 : 1.0)) // Fade out when swiping up
                             
                             // --- GESTURES ---
                             .onTapGesture(count: 2) {
@@ -150,6 +150,26 @@ struct FeedView: View {
                     }
                     .zIndex(5)
                 }
+                
+                // 7. Error Toast (Subtle)
+                if let error = feedManager.error {
+                    VStack {
+                        Spacer()
+                        Text(error)
+                            .font(.caption.bold())
+                            .foregroundStyle(.white)
+                            .padding()
+                            .background(Color.red.opacity(0.8))
+                            .cornerRadius(10)
+                            .padding(.bottom, 120)
+                    }
+                    .transition(.move(edge: .bottom))
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            feedManager.error = nil
+                        }
+                    }
+                }
             }
             .task {
                 if feedManager.items.isEmpty {
@@ -213,7 +233,7 @@ struct FeedView: View {
         withAnimation(.spring(duration: 0.3)) { showHeartOverlay = true }
         Haptics.shared.playSuccess()
         
-        // 2. Save to interested items
+        // 2. Save to interested items (DB Call)
         Task { await tradeManager.markAsInterested(item: item) }
         
         // 3. Hide heart and dismiss item after delay

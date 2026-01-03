@@ -20,79 +20,152 @@ struct QuickOfferSheet: View {
     @State private var isSending = false
     @State private var showSuccess = false
     
+    // ✨ NEW: Calculate items that are already in pending/accepted trades
+    // This prevents double-booking items and saves server errors.
+    var busyItemIds: Set<UUID> {
+        guard let myId = userManager.currentUser?.id else { return [] }
+        var ids = Set<UUID>()
+        
+        for trade in tradeManager.activeTrades {
+            // Check active statuses
+            if ["pending", "accepted"].contains(trade.status) {
+                // Case A: I sent the offer -> My offered items are busy
+                if trade.senderId == myId {
+                    ids.insert(trade.offeredItemId)
+                    trade.additionalOfferedItemIds.forEach { ids.insert($0) }
+                }
+                // Case B: I received an offer AND accepted it -> My item is promised
+                if trade.receiverId == myId && trade.status == "accepted" {
+                    ids.insert(trade.wantedItemId)
+                    trade.additionalWantedItemIds.forEach { ids.insert($0) }
+                }
+            }
+        }
+        return ids
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
                 // Background
                 LiquidBackground()
                     .opacity(0.6)
+                    .ignoresSafeArea()
                 
-                VStack(spacing: 20) {
+                VStack(spacing: 0) {
                     
-                    // 1. HEADER: The Item You Want
-                    VStack(spacing: 8) {
-                        Text("You are interested in")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.6))
-                            .textCase(.uppercase)
+                    // 1. HEADER: The Item You Want (Glassmorphic)
+                    VStack(spacing: 12) {
+                        Capsule()
+                            .fill(Color.white.opacity(0.2))
+                            .frame(width: 40, height: 4)
+                            .padding(.top, 10)
                         
-                        HStack(spacing: 12) {
+                        HStack(spacing: 16) {
                             AsyncImageView(filename: wantedItem.imageUrl)
-                                .frame(width: 60, height: 60)
-                                .cornerRadius(12)
-                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.2), lineWidth: 1))
+                                .scaledToFill()
+                                .frame(width: 64, height: 64)
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                                .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.2), lineWidth: 1))
                             
-                            VStack(alignment: .leading) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("YOU WANT")
+                                    .font(.system(size: 10, weight: .black))
+                                    .foregroundStyle(.cyan)
+                                
                                 Text(wantedItem.title)
                                     .font(.headline)
                                     .foregroundStyle(.white)
+                                    .lineLimit(1)
+                                
                                 Text(wantedItem.category)
                                     .font(.caption)
-                                    .foregroundStyle(.cyan)
+                                    .foregroundStyle(.white.opacity(0.6))
                             }
                             Spacer()
                         }
-                        .padding()
+                        .padding(16)
                         .background(.ultraThinMaterial)
-                        .cornerRadius(16)
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
+                        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.1), lineWidth: 1))
                     }
-                    .padding(.horizontal)
-                    .padding(.top, 20)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 20)
                     
                     // 2. YOUR INVENTORY
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("OFFER AN ITEM")
-                            .font(.caption)
-                            .fontWeight(.black)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("SELECT AN ITEM TO OFFER")
+                            .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(.white.opacity(0.5))
                             .padding(.horizontal, 24)
                         
                         if userManager.userItems.isEmpty {
-                            VStack(spacing: 12) {
+                            VStack(spacing: 16) {
                                 Spacer()
-                                Image(systemName: "archivebox")
-                                    .font(.system(size: 40))
-                                    .foregroundStyle(.white.opacity(0.2))
+                                Circle()
+                                    .fill(Color.white.opacity(0.05))
+                                    .frame(width: 80, height: 80)
+                                    .overlay(
+                                        Image(systemName: "archivebox")
+                                            .font(.system(size: 32))
+                                            .foregroundStyle(.white.opacity(0.3))
+                                    )
+                                
                                 Text("Your inventory is empty")
-                                    .foregroundStyle(.gray)
+                                    .font(.headline)
+                                    .foregroundStyle(.white.opacity(0.7))
+                                
+                                Text("Add items to your profile to start trading.")
+                                    .font(.caption)
+                                    .foregroundStyle(.white.opacity(0.5))
                                 Spacer()
                             }
                             .frame(maxWidth: .infinity)
                         } else {
-                            ScrollView {
+                            ScrollView(showsIndicators: false) {
                                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
                                     ForEach(userManager.userItems) { myItem in
-                                        InventoryItemCard(item: myItem, isSelected: selectedItemId == myItem.id)
-                                            .onTapGesture {
-                                                withAnimation {
-                                                    selectedItemId = myItem.id
+                                        let isBusy = busyItemIds.contains(myItem.id)
+                                        let isSelected = selectedItemId == myItem.id
+                                        
+                                        // Custom Card Logic for Busy State
+                                        Button(action: {
+                                            if !isBusy {
+                                                withAnimation(.spring(response: 0.3)) {
+                                                    selectedItemId = (selectedItemId == myItem.id) ? nil : myItem.id
                                                     Haptics.shared.playLight()
                                                 }
+                                            } else {
+                                                Haptics.shared.playError()
                                             }
+                                        }) {
+                                            InventoryItemCard(item: myItem, isSelected: isSelected)
+                                                // ✨ BUSY OVERLAY
+                                                .overlay(
+                                                    ZStack {
+                                                        if isBusy {
+                                                            Color.black.opacity(0.6)
+                                                                .cornerRadius(16)
+                                                            
+                                                            VStack(spacing: 4) {
+                                                                Image(systemName: "lock.fill")
+                                                                Text("PENDING")
+                                                                    .font(.system(size: 10, weight: .black))
+                                                            }
+                                                            .foregroundStyle(.white.opacity(0.8))
+                                                        }
+                                                    }
+                                                )
+                                                // Grayscale busy items
+                                                .saturation(isBusy ? 0 : 1)
+                                                .scaleEffect(isSelected ? 0.98 : 1)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .disabled(isBusy)
                                     }
                                 }
-                                .padding(.horizontal)
-                                .padding(.bottom, 100) // Space for button
+                                .padding(.horizontal, 20)
+                                .padding(.bottom, 120) // Space for floating button
                             }
                         }
                     }
@@ -100,43 +173,44 @@ struct QuickOfferSheet: View {
                     Spacer()
                 }
                 
-                // 3. ACTION BUTTON (Floating)
+                // 3. ACTION BUTTON (Floating Glass)
                 VStack {
                     Spacer()
-                    Button(action: sendOffer) {
-                        if isSending {
-                            ProgressView().tint(.black)
-                                .padding()
-                                .frame(maxWidth: .infinity)
-                                .background(Color.white)
-                                .cornerRadius(20)
-                        } else {
-                            HStack {
-                                Text("Offer Up")
-                                    .font(.headline).bold()
-                                Image(systemName: "arrow.up.circle.fill")
+                    
+                    // Button Container
+                    VStack(spacing: 0) {
+                        Button(action: sendOffer) {
+                            ZStack {
+                                // Background
+                                Capsule()
+                                    .fill(selectedItemId != nil ? Color.cyan : Color.white.opacity(0.1))
+                                    .frame(height: 56)
+                                    .shadow(color: selectedItemId != nil ? .cyan.opacity(0.4) : .clear, radius: 10, y: 5)
+                                
+                                if isSending {
+                                    ProgressView()
+                                        .tint(.black)
+                                } else {
+                                    HStack {
+                                        Text("Send Offer")
+                                            .font(.headline.bold())
+                                        Image(systemName: "arrow.up.circle.fill")
+                                            .font(.title3)
+                                    }
+                                    .foregroundStyle(selectedItemId != nil ? .black : .white.opacity(0.3))
+                                }
                             }
-                            .foregroundStyle(.black)
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(selectedItemId == nil ? Color.white.opacity(0.5) : Color.cyan)
-                            .cornerRadius(20)
-                            .shadow(color: .cyan.opacity(0.3), radius: 10)
                         }
+                        .disabled(selectedItemId == nil || isSending)
                     }
-                    .disabled(selectedItemId == nil || isSending)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 20)
+                    .padding(24)
+                    .background(
+                        LinearGradient(colors: [.black.opacity(0), .black.opacity(0.8)], startPoint: .top, endPoint: .bottom)
+                            .ignoresSafeArea()
+                    )
                 }
             }
-            .navigationTitle("Quick Offer")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-            // ✨ FIX: iOS 16 compatible syntax
+            .navigationBarHidden(true) // Hide default nav bar for custom feel
             .onChange(of: showSuccess) { newValue in
                 if newValue { dismiss() }
             }
@@ -152,7 +226,7 @@ struct QuickOfferSheet: View {
         isSending = true
         
         Task {
-            // Use the standard single-item offer logic (Not the multi-item Builder)
+            // Use the standard single-item offer logic (Optimized in TradeManager)
             let success = await tradeManager.sendOffer(wantedItem: wantedItem, myItem: myItem)
             
             await MainActor.run {

@@ -1,4 +1,3 @@
-
 import SwiftUI
 import Combine
 import Supabase
@@ -11,7 +10,7 @@ class ChatManager: ObservableObject {
     @Published var conversations: [UUID: [Message]] = [:]
     @Published var currentUserId: UUID?
     
-    // Connection Status (Useful for UI debugging)
+    // Connection Status
     @Published var isConnected = false
     
     private var channel: RealtimeChannelV2?
@@ -19,7 +18,6 @@ class ChatManager: ObservableObject {
     
     private init() {
         Task {
-            // Listen for Auth changes
             for await state in client.auth.authStateChanges {
                 if let session = state.session {
                     await MainActor.run { self.currentUserId = session.user.id }
@@ -48,11 +46,11 @@ class ChatManager: ObservableObject {
         isSetup = true
         print("💬 ChatManager: Setting up for \(userId)...")
         
-        // 1. Initial Load
-        await fetchAllMessages(userId: userId)
+        // 1. Initial Sync (Inbox)
+        await fetchInbox(userId: userId)
         
-        // 2. Start Realtime Listener
-        await subscribeToRealtime()
+        // 2. Realtime Listener
+        await subscribeToRealtime(userId: userId)
     }
     
     // MARK: - Actions
@@ -71,15 +69,22 @@ class ChatManager: ObservableObject {
             tradeId: tradeId
         )
         
-        // Optimistic Update (Show immediately)
+        // Optimistic UI Update (Snappy!)
         appendMessage(newMessage)
         
         do {
             try await client.from("messages").insert(newMessage).execute()
-            print("✅ Message sent to DB")
         } catch {
             print("❌ Failed to send message: \(error)")
+            // Optional: Mark message as failed in UI
         }
+    }
+    
+    @MainActor
+    func sendSystemMessage(_ actionType: String, to receiverId: UUID, tradeId: UUID) async {
+        // System actions are special codes handled by the UI
+        let content = "ACTION:\(actionType)"
+        await sendMessage(content, to: receiverId, tradeId: tradeId)
     }
     
     @MainActor
@@ -87,7 +92,9 @@ class ChatManager: ObservableObject {
         guard let myId = currentUserId else { return }
         
         do {
-            let filename = "\(myId)/\(Int(Date().timeIntervalSince1970)).jpg"
+            // 📉 COST OPTIMIZATION: Compression should happen before calling this
+            let filename = "\(myId)/\(UUID().uuidString).jpg"
+            
             let _ = try await client.storage
                 .from("chat-images")
                 .upload(filename, data: data, options: FileOptions(contentType: "image/jpeg"))
@@ -113,80 +120,99 @@ class ChatManager: ObservableObject {
     
     // MARK: - Fetching & Realtime
     
+    /// Fetches the inbox state.
+    /// 📉 OPTIMIZATION: Limits to recent history to prevent fetching 10k messages on load.
     @MainActor
-    func fetchAllMessages(userId: UUID) async {
+    func fetchInbox(userId: UUID) async {
         do {
+            // Fetch last 100 messages for the inbox preview
+            // For a production app, you'd use a specific "latest_messages" view in SQL
             let messages: [Message] = try await client
                 .from("messages")
                 .select()
                 .or("sender_id.eq.\(userId),receiver_id.eq.\(userId)")
+                .order("created_at", ascending: false) // Newest first
+                .limit(50) // Limit to save data
+                .execute()
+                .value
+            
+            // Re-sort for display (Oldest first)
+            let sorted = messages.sorted { $0.createdAt < $1.createdAt }
+            self.conversations = Dictionary(grouping: sorted) { $0.tradeId ?? UUID() }
+            
+        } catch {
+            print("❌ Error fetching inbox: \(error)")
+        }
+    }
+    
+    /// ✨ NEW: targeted fetch for a single room.
+    /// Call this when entering a specific chat to ensure we have the FULL history for that trade.
+    @MainActor
+    func loadChat(tradeId: UUID) async {
+        do {
+            let messages: [Message] = try await client
+                .from("messages")
+                .select()
+                .eq("trade_id", value: tradeId)
                 .order("created_at", ascending: true)
                 .execute()
                 .value
             
-            self.conversations = Dictionary(grouping: messages) { $0.tradeId ?? UUID() }
-            print("✅ ChatManager: Loaded \(messages.count) total messages.")
+            self.conversations[tradeId] = messages
         } catch {
-            print("❌ Error fetching messages: \(error)")
+            print("❌ Error loading chat room: \(error)")
         }
     }
     
-    func subscribeToRealtime() async {
+    func subscribeToRealtime(userId: UUID) async {
         if let existingChannel = channel { await existingChannel.unsubscribe() }
         
+        // Channel scoped to public messages
+        // 🔒 SECURITY: We filter by receiver_id so we don't get everyone's messages
         let newChannel = client.channel("public:messages")
         self.channel = newChannel
         
-        // Listen for INSERT events (New Messages)
         let changeStream = newChannel.postgresChange(
             AnyAction.self,
             schema: "public",
-            table: "messages"
+            table: "messages",
+            filter: "receiver_id=eq.\(userId)" // ✨ Only listen to messages for ME
         )
         
         do {
             try await newChannel.subscribeWithError()
             await MainActor.run { self.isConnected = true }
-            print("✅ Realtime Connected!")
         } catch {
-            print("⚠️ Realtime connection failed: \(error). Retrying in 5s...")
+            print("⚠️ Realtime connection failed, retrying...")
             try? await Task.sleep(nanoseconds: 5 * 1_000_000_000)
-            await subscribeToRealtime()
+            await subscribeToRealtime(userId: userId)
             return
         }
         
         Task {
-            // FIX: We now capture the 'action' to inspect the payload
             for await action in changeStream {
+                guard let myId = await MainActor.run(body: { return self.currentUserId }) else { continue }
                 
-                // 1. Refresh Data
-                if let id = await MainActor.run(body: { return self.currentUserId }) {
-                    await fetchAllMessages(userId: id)
-                    
-                    // 2. ✨ SMART NOTIFICATION TRIGGER ✨
-                    await MainActor.run {
-                        // Attempt to extract sender_id from the action payload
-                        var isFromMe = false
-                        
-                        switch action {
-                        case .insert(let record):
-                            // Check if the 'sender_id' in the payload matches our current ID
-                            if let senderStr = record.record["sender_id"]?.stringValue,
-                               let senderUUID = UUID(uuidString: senderStr),
-                               senderUUID == id {
-                                isFromMe = true
+                await MainActor.run {
+                    switch action {
+                    case .insert(let insertAction):
+                        do {
+                            let data = try JSONEncoder().encode(insertAction.record)
+                            let message = try JSONDecoder().decode(Message.self, from: data)
+                            self.appendMessage(message)
+                            
+                            // Trigger Local Notification if backgrounded
+                            if message.senderId != myId {
+                                NotificationManager.shared.sendLocalNotification(
+                                    title: "New Message",
+                                    body: message.content.hasPrefix("ACTION:") ? "New Update on your trade" : "You have a new message"
+                                )
                             }
-                        default:
-                            break
+                        } catch {
+                            print("⚠️ Failed to decode realtime message: \(error)")
                         }
-                        
-                        // Only notify if the message is NOT from me
-                        if !isFromMe {
-                            NotificationManager.shared.sendLocalNotification(
-                                title: "New Message",
-                                body: "You received a new message on LiquidSwap!"
-                            )
-                        }
+                    default:
+                        break
                     }
                 }
             }
@@ -194,10 +220,19 @@ class ChatManager: ObservableObject {
         }
     }
     
+    @MainActor
     private func appendMessage(_ message: Message) {
         guard let tradeId = message.tradeId else { return }
-        if conversations[tradeId] == nil { conversations[tradeId] = [] }
-        conversations[tradeId]?.append(message)
+        
+        if conversations[tradeId] == nil {
+            conversations[tradeId] = []
+        }
+        
+        // Prevent duplicates
+        if !(conversations[tradeId]?.contains(where: { $0.id == message.id }) ?? false) {
+            conversations[tradeId]?.append(message)
+            // Ensure strictly sorted by time
+            conversations[tradeId]?.sort { $0.createdAt < $1.createdAt }
+        }
     }
 }
-

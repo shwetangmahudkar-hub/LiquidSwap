@@ -7,7 +7,8 @@ struct TradesView: View {
     // Filter State
     enum TradeFilter: String, CaseIterable {
         case incoming = "Incoming"
-        case interested = "Interested"
+        case sent = "Sent"
+        case interested = "Saved"
     }
     @State private var selectedFilter: TradeFilter = .incoming
     
@@ -17,84 +18,121 @@ struct TradesView: View {
     @State private var selectedProfileUserId: UUID?
     @State private var selectedOfferForCounter: TradeOffer?
     
+    // Navigation State (✨ NEW: For Auto-Redirect)
+    @State private var navigateToChatTrade: TradeOffer?
+    
     // Delete Confirmation
     @State private var itemToDelete: TradeItem?
     @State private var showDeleteConfirmation = false
     
+    // Cancel Offer Confirmation
+    @State private var offerToCancel: TradeOffer?
+    @State private var showCancelConfirmation = false
+    
+    // Computed Property for Sent Offers
+    var sentOffers: [TradeOffer] {
+        guard let myId = userManager.currentUser?.id else { return [] }
+        return tradeManager.activeTrades.filter { trade in
+            trade.senderId == myId && trade.status == "pending"
+        }
+    }
+    
     var body: some View {
         NavigationStack {
-            ZStack {
-                // Global Background
-                LiquidBackground()
-                
-                VStack(spacing: 0) {
-                    // 1. Header
-                    headerView
+            if #available(iOS 17.0, *) {
+                ZStack {
+                    // Global Background
+                    LiquidBackground()
                     
-                    // 2. Filter Tabs
-                    filterTabs
-                    
-                    // 3. Main Content
-                    ScrollView {
-                        VStack(spacing: 20) {
-                            // List Content based on Filter
-                            LazyVStack(spacing: 16) {
-                                if selectedFilter == .incoming {
-                                    incomingOffersList
-                                } else {
-                                    interestedItemsList
+                    VStack(spacing: 0) {
+                        // 1. Header
+                        headerView
+                        
+                        // 2. Filter Tabs
+                        filterTabs
+                        
+                        // 3. Main Content
+                        ScrollView {
+                            VStack(spacing: 20) {
+                                // List Content based on Filter
+                                LazyVStack(spacing: 16) {
+                                    switch selectedFilter {
+                                    case .incoming:
+                                        incomingOffersList
+                                    case .sent:
+                                        sentOffersList
+                                    case .interested:
+                                        interestedItemsList
+                                    }
                                 }
+                                .padding(.bottom, 100)
                             }
-                            .padding(.bottom, 100)
+                            .padding(.horizontal)
                         }
-                        .padding(.horizontal)
-                    }
-                    .refreshable {
-                        await tradeManager.loadTradesData()
+                        .refreshable {
+                            await tradeManager.loadTradesData()
+                        }
                     }
                 }
-            }
-            .onAppear {
-                Task { await tradeManager.loadTradesData() }
-            }
-            // Quick Offer Sheet
-            .sheet(item: $selectedItemForOffer) { item in
-                QuickOfferSheet(wantedItem: item)
-                    .presentationDetents([.medium, .large])
+                // ✨ NEW: Auto-Navigation to Chat Room
+                .navigationDestination(item: $navigateToChatTrade) { trade in
+                    ChatRoomView(trade: trade)
+                }
+                .onAppear {
+                    Task { await tradeManager.loadTradesData() }
+                }
+                // Quick Offer Sheet
+                .sheet(item: $selectedItemForOffer) { item in
+                    QuickOfferSheet(wantedItem: item)
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                }
+                // Product Detail Sheet
+                .sheet(item: $selectedItemForDetail) { item in
+                    NavigationStack {
+                        ProductDetailView(item: item)
+                    }
+                    .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
-            }
-            // Product Detail Sheet
-            .sheet(item: $selectedItemForDetail) { item in
-                NavigationStack {
-                    ProductDetailView(item: item)
                 }
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-            }
-            // Profile Sheet
-            .sheet(item: $selectedProfileUserId) { userId in
-                NavigationStack {
-                    PublicProfileView(userId: userId)
-                }
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-            }
-            // Counter Offer Sheet
-            .sheet(item: $selectedOfferForCounter) { offer in
-                CounterOfferSheet(originalTrade: offer)
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-            }
-            // Delete Confirmation Alert
-            .alert("Remove from Interested?", isPresented: $showDeleteConfirmation) {
-                Button("Cancel", role: .cancel) { }
-                Button("Remove", role: .destructive) {
-                    if let item = itemToDelete {
-                        deleteInterestedItem(item)
+                // Profile Sheet
+                .sheet(item: $selectedProfileUserId) { userId in
+                    NavigationStack {
+                        PublicProfileView(userId: userId)
                     }
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
                 }
-            } message: {
-                Text("This item will be removed from your interested list.")
+                // Counter Offer Sheet
+                .sheet(item: $selectedOfferForCounter) { offer in
+                    CounterOfferSheet(originalTrade: offer)
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                }
+                // Delete Interested Alert
+                .alert("Remove from Saved?", isPresented: $showDeleteConfirmation) {
+                    Button("Cancel", role: .cancel) { }
+                    Button("Remove", role: .destructive) {
+                        if let item = itemToDelete {
+                            deleteInterestedItem(item)
+                        }
+                    }
+                } message: {
+                    Text("This item will be removed from your saved list.")
+                }
+                // Cancel Offer Alert
+                .alert("Cancel Offer?", isPresented: $showCancelConfirmation) {
+                    Button("Keep Offer", role: .cancel) { }
+                    Button("Cancel Offer", role: .destructive) {
+                        if let offer = offerToCancel {
+                            cancelSentOffer(offer)
+                        }
+                    }
+                } message: {
+                    Text("This will remove the offer permanently.")
+                }
+            } else {
+                // Fallback on earlier versions
             }
         }
     }
@@ -121,12 +159,14 @@ struct TradesView: View {
         HStack(spacing: 8) {
             ForEach(TradeFilter.allCases, id: \.self) { filter in
                 Button(action: {
+                    Haptics.shared.playLight()
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                         selectedFilter = filter
                     }
                 }) {
                     HStack(spacing: 6) {
-                        Image(systemName: filter == .incoming ? "tray.and.arrow.down.fill" : "heart.fill")
+                        // Dynamic Icons
+                        Image(systemName: iconForFilter(filter))
                             .font(.system(size: 12))
                         Text(filter.rawValue)
                             .appFont(14, weight: .bold)
@@ -154,12 +194,22 @@ struct TradesView: View {
         .padding(.bottom, 16)
     }
     
+    private func iconForFilter(_ filter: TradeFilter) -> String {
+        switch filter {
+        case .incoming: return "tray.and.arrow.down.fill"
+        case .sent: return "paperplane.fill"
+        case .interested: return "heart.fill"
+        }
+    }
+    
+    // MARK: - List Views
+    
     private var incomingOffersList: some View {
         Group {
             if tradeManager.incomingOffers.isEmpty && !tradeManager.isLoading {
                 GlassEmptyState(
                     icon: "tray",
-                    message: "No incoming offers yet",
+                    message: "No incoming offers",
                     subtitle: "When someone wants to trade with you, it'll appear here."
                 )
             } else {
@@ -175,35 +225,39 @@ struct TradesView: View {
                         } label: {
                             Label("Accept Offer", systemImage: "checkmark.circle.fill")
                         }
-                        
                         Button {
                             selectedOfferForCounter = offer
                         } label: {
                             Label("Counter Offer", systemImage: "arrow.triangle.2.circlepath")
                         }
-                        
                         Button {
                             selectedProfileUserId = offer.senderId
                         } label: {
                             Label("View Sender Profile", systemImage: "person.circle")
                         }
-                        
-                        if let item = offer.offeredItem {
-                            Button {
-                                selectedItemForDetail = item
-                            } label: {
-                                Label("View Their Item", systemImage: "cube.box")
-                            }
-                        }
-                        
-                        Divider()
-                        
-                        Button(role: .destructive) {
-                            handleOfferResponse(offer: offer, accept: false)
-                        } label: {
-                            Label("Decline Offer", systemImage: "xmark.circle.fill")
-                        }
                     }
+                }
+            }
+        }
+    }
+    
+    private var sentOffersList: some View {
+        Group {
+            if sentOffers.isEmpty && !tradeManager.isLoading {
+                GlassEmptyState(
+                    icon: "paperplane",
+                    message: "No sent offers",
+                    subtitle: "Offers you make will appear here until accepted."
+                )
+            } else {
+                ForEach(sentOffers) { offer in
+                    SentOfferCard(
+                        offer: offer,
+                        onCancel: {
+                            offerToCancel = offer
+                            showCancelConfirmation = true
+                        }
+                    )
                 }
             }
         }
@@ -214,7 +268,7 @@ struct TradesView: View {
             if tradeManager.interestedItems.isEmpty && !tradeManager.isLoading {
                 GlassEmptyState(
                     icon: "heart",
-                    message: "No liked items yet",
+                    message: "No saved items",
                     subtitle: "Double-tap items in the feed to save them here."
                 )
             } else {
@@ -238,9 +292,23 @@ struct TradesView: View {
     
     private func handleOfferResponse(offer: TradeOffer, accept: Bool) {
         Task {
-            _ = await tradeManager.respondToOffer(offer: offer, accept: accept)
-            if accept {
+            let success = await tradeManager.respondToOffer(offer: offer, accept: accept)
+            
+            if accept && success {
                 Haptics.shared.playSuccess()
+                
+                // ✨ NEW: Auto-Redirect Logic
+                // 1. Create a local copy with updated status so ChatRoomView renders correctly
+                var acceptedTrade = offer
+                acceptedTrade.status = "accepted"
+                
+                // 2. Wait briefly so user sees the card animation/haptic confirmation
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+                
+                // 3. Navigate
+                await MainActor.run {
+                    navigateToChatTrade = acceptedTrade
+                }
             }
         }
     }
@@ -253,9 +321,20 @@ struct TradesView: View {
             }
         }
     }
+    
+    private func cancelSentOffer(_ offer: TradeOffer) {
+        Task {
+            // Update DB Status
+            try? await DatabaseService.shared.updateTradeStatus(tradeId: offer.id, status: "cancelled")
+            Haptics.shared.playMedium()
+            
+            // Refresh Data
+            await tradeManager.loadTradesData()
+        }
+    }
 }
 
-// MARK: - Glass Empty State Component
+// MARK: - Components
 
 struct GlassEmptyState: View {
     let icon: String
@@ -297,8 +376,6 @@ struct GlassEmptyState: View {
     }
 }
 
-// MARK: - Offer Card Component
-
 struct OfferCard: View {
     let offer: TradeOffer
     let onViewProfile: () -> Void
@@ -308,121 +385,75 @@ struct OfferCard: View {
     
     var body: some View {
         VStack(spacing: 16) {
-            // Header Row
+            // Header
             HStack {
                 HStack(spacing: 8) {
                     Circle()
                         .fill(Color.cyan.opacity(0.2))
                         .frame(width: 32, height: 32)
-                        .overlay(
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(.cyan)
-                        )
-                    
+                        .overlay(Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 14, weight: .bold)).foregroundStyle(.cyan))
                     Text("Trade Offer")
                         .appFont(14, weight: .bold)
                         .foregroundStyle(.white)
                 }
-                
                 Spacer()
-                
                 Text(timeAgoString(from: offer.createdAt))
                     .appFont(11)
                     .foregroundStyle(.white.opacity(0.5))
             }
             
-            // Items Row
+            // Items
             HStack(spacing: 12) {
                 itemVisual(item: offer.offeredItem, label: "THEY OFFER", borderColor: .cyan)
-                
                 VStack(spacing: 4) {
                     Image(systemName: "arrow.right")
                         .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(.white.opacity(0.4))
                 }
-                
                 itemVisual(item: offer.wantedItem, label: "FOR YOUR", borderColor: .purple)
             }
             
-            // Sender Info Button
+            // Sender
             Button(action: onViewProfile) {
                 HStack(spacing: 8) {
-                    Image(systemName: "person.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.cyan)
-                    Text("View Sender Profile")
-                        .appFont(12, weight: .medium)
-                        .foregroundStyle(.cyan)
+                    Image(systemName: "person.circle.fill").font(.system(size: 14)).foregroundStyle(.cyan)
+                    Text("View Sender Profile").appFont(12, weight: .medium).foregroundStyle(.cyan)
                     Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.cyan.opacity(0.6))
+                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(.cyan.opacity(0.6))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(Color.cyan.opacity(0.1))
-                .cornerRadius(12)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(Color.cyan.opacity(0.1)).cornerRadius(12)
             }
             
-            // Action Buttons (Bottom, easy thumb reach)
+            // Actions
             HStack(spacing: 12) {
-                // Decline Button
                 Button(action: { handleResponse(accept: false) }) {
                     HStack(spacing: 6) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .bold))
-                        Text("Decline")
-                            .appFont(14, weight: .bold)
+                        Image(systemName: "xmark").font(.system(size: 14, weight: .bold))
+                        Text("Decline").appFont(14, weight: .bold)
                     }
-                    .foregroundStyle(.red)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.red.opacity(0.15))
-                    .cornerRadius(14)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.red.opacity(0.3), lineWidth: 1)
-                    )
+                    .foregroundStyle(.red).frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(Color.red.opacity(0.15)).cornerRadius(14)
                 }
                 .disabled(isProcessing)
                 
-                // Counter Button
                 Button(action: onCounter) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.system(size: 14, weight: .bold))
-                    }
-                    .foregroundStyle(.white)
-                    .frame(width: 50)
-                    .padding(.vertical, 14)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(14)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                    )
+                    Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white).frame(width: 50).padding(.vertical, 14)
+                        .background(.ultraThinMaterial).cornerRadius(14)
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.2), lineWidth: 1))
                 }
                 .disabled(isProcessing)
                 
-                // Accept Button
                 Button(action: { handleResponse(accept: true) }) {
                     HStack(spacing: 6) {
-                        if isProcessing {
-                            ProgressView()
-                                .tint(.black)
-                        } else {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 14, weight: .bold))
-                            Text("Accept")
-                                .appFont(14, weight: .bold)
+                        if isProcessing { ProgressView().tint(.black) } else {
+                            Image(systemName: "checkmark").font(.system(size: 14, weight: .bold))
+                            Text("Accept").appFont(14, weight: .bold)
                         }
                     }
-                    .foregroundStyle(.black)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.cyan)
-                    .cornerRadius(14)
+                    .foregroundStyle(.black).frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(Color.cyan).cornerRadius(14)
                 }
                 .disabled(isProcessing)
             }
@@ -430,53 +461,29 @@ struct OfferCard: View {
         .padding(20)
         .background(.ultraThinMaterial)
         .cornerRadius(24)
-        .overlay(
-            RoundedRectangle(cornerRadius: 24)
-                .stroke(
-                    LinearGradient(
-                        colors: [.white.opacity(0.3), .white.opacity(0.05)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        )
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.1), lineWidth: 1))
         .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
     }
     
     func itemVisual(item: TradeItem?, label: String, borderColor: Color) -> some View {
         VStack(spacing: 8) {
-            Text(label)
-                .appFont(9, weight: .black)
-                .foregroundStyle(borderColor.opacity(0.8))
-            
+            Text(label).appFont(9, weight: .black).foregroundStyle(borderColor.opacity(0.8))
             AsyncImageView(filename: item?.imageUrl)
-                .frame(width: 70, height: 70)
-                .cornerRadius(16)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(borderColor.opacity(0.4), lineWidth: 2)
-                )
-            
-            Text(item?.title ?? "Unknown")
-                .appFont(12, weight: .bold)
-                .lineLimit(1)
-                .foregroundStyle(.white)
+                .frame(width: 70, height: 70).cornerRadius(16)
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(borderColor.opacity(0.4), lineWidth: 2))
+            Text(item?.title ?? "Unknown").appFont(12, weight: .bold).lineLimit(1).foregroundStyle(.white)
         }
         .frame(maxWidth: .infinity)
     }
     
     func handleResponse(accept: Bool) {
+        // Updated to use the new method that handles navigation
+        // But for generic buttons outside the main list, we can keep simple
         isProcessing = true
         Haptics.shared.playLight()
         Task {
             _ = await TradeManager.shared.respondToOffer(offer: offer, accept: accept)
-            await MainActor.run {
-                isProcessing = false
-                if accept {
-                    Haptics.shared.playSuccess()
-                }
-            }
+            await MainActor.run { isProcessing = false; if accept { Haptics.shared.playSuccess() } }
         }
     }
     
@@ -489,7 +496,75 @@ struct OfferCard: View {
     }
 }
 
-// MARK: - Interested Item Card Component
+// ✨ NEW: Sent Offer Card
+struct SentOfferCard: View {
+    let offer: TradeOffer
+    let onCancel: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            // Header
+            HStack {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color.orange.opacity(0.2))
+                        .frame(width: 32, height: 32)
+                        .overlay(Image(systemName: "paperplane.fill").font(.system(size: 14)).foregroundStyle(.orange))
+                    Text("Offer Sent")
+                        .appFont(14, weight: .bold)
+                        .foregroundStyle(.white)
+                }
+                Spacer()
+                Text("Pending")
+                    .font(.caption.bold())
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.1)).clipShape(Capsule())
+            }
+            
+            // Items
+            HStack(spacing: 12) {
+                // For Sent Offers: "You Offered" (Offered Item) -> "For Their" (Wanted Item)
+                itemVisual(item: offer.offeredItem, label: "YOU OFFERED", borderColor: .orange)
+                VStack(spacing: 4) {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+                itemVisual(item: offer.wantedItem, label: "FOR THEIR", borderColor: .gray)
+            }
+            
+            Divider().background(Color.white.opacity(0.1))
+            
+            // Cancel Action
+            Button(action: onCancel) {
+                HStack {
+                    Image(systemName: "trash")
+                    Text("Cancel Offer")
+                }
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(.red.opacity(0.8))
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(20)
+        .background(.ultraThinMaterial)
+        .cornerRadius(24)
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.1), lineWidth: 1))
+    }
+    
+    func itemVisual(item: TradeItem?, label: String, borderColor: Color) -> some View {
+        VStack(spacing: 8) {
+            Text(label).appFont(9, weight: .black).foregroundStyle(borderColor.opacity(0.8))
+            AsyncImageView(filename: item?.imageUrl)
+                .frame(width: 60, height: 60).cornerRadius(14)
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(borderColor.opacity(0.4), lineWidth: 2))
+            Text(item?.title ?? "Unknown").appFont(12, weight: .bold).lineLimit(1).foregroundStyle(.white)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
 
 struct InterestedItemCard: View {
     let item: TradeItem
@@ -501,99 +576,41 @@ struct InterestedItemCard: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 14) {
-                // Item Image
                 AsyncImageView(filename: item.imageUrl)
-                    .frame(width: 70, height: 70)
-                    .cornerRadius(16)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                    )
+                    .frame(width: 70, height: 70).cornerRadius(16)
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.15), lineWidth: 1))
                 
-                // Item Info
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(item.title)
-                        .appFont(16, weight: .bold)
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                    
+                    Text(item.title).appFont(16, weight: .bold).foregroundStyle(.white).lineLimit(1)
                     HStack(spacing: 8) {
-                        // Category Pill
                         Text(item.category.uppercased())
-                            .appFont(9, weight: .bold)
-                            .foregroundStyle(.cyan)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.cyan.opacity(0.15))
-                            .clipShape(Capsule())
-                        
-                        // Distance
+                            .appFont(9, weight: .bold).foregroundStyle(.cyan)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Color.cyan.opacity(0.15)).clipShape(Capsule())
                         if item.distance > 0 {
                             HStack(spacing: 3) {
-                                Image(systemName: "location.fill")
-                                    .font(.system(size: 8))
-                                Text("\(String(format: "%.1f", item.distance)) km")
-                                    .appFont(10)
+                                Image(systemName: "location.fill").font(.system(size: 8))
+                                Text("\(String(format: "%.1f", item.distance)) km").appFont(10)
                             }
                             .foregroundStyle(.white.opacity(0.5))
                         }
                     }
-                    
-                    Text("Tap to make an offer")
-                        .appFont(11)
-                        .foregroundStyle(.white.opacity(0.4))
+                    Text("Tap to make an offer").appFont(11).foregroundStyle(.white.opacity(0.4))
                 }
-                
                 Spacer()
-                
-                // Arrow Icon
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.cyan.opacity(0.6))
+                Image(systemName: "chevron.right").font(.system(size: 14, weight: .bold)).foregroundStyle(.cyan.opacity(0.6))
             }
-            .padding(14)
-            .background(.ultraThinMaterial)
-            .cornerRadius(20)
-            .overlay(
-                RoundedRectangle(cornerRadius: 20)
-                    .stroke(
-                        LinearGradient(
-                            colors: [.white.opacity(0.2), .white.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
+            .padding(14).background(.ultraThinMaterial).cornerRadius(20)
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.1), lineWidth: 1))
             .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button {
-                onTap()
-            } label: {
-                Label("Make Offer", systemImage: "arrow.triangle.2.circlepath")
-            }
-            
-            Button {
-                onViewDetail()
-            } label: {
-                Label("View Item Details", systemImage: "cube.box")
-            }
-            
-            Button {
-                onViewProfile()
-            } label: {
-                Label("View Owner Profile", systemImage: "person.circle")
-            }
-            
+            Button { onTap() } label: { Label("Make Offer", systemImage: "arrow.triangle.2.circlepath") }
+            Button { onViewDetail() } label: { Label("View Details", systemImage: "cube.box") }
+            Button { onViewProfile() } label: { Label("View Owner", systemImage: "person.circle") }
             Divider()
-            
-            Button(role: .destructive) {
-                onDelete()
-            } label: {
-                Label("Remove from Interested", systemImage: "heart.slash")
-            }
+            Button(role: .destructive) { onDelete() } label: { Label("Remove", systemImage: "heart.slash") }
         }
     }
 }

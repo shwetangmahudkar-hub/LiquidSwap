@@ -6,6 +6,7 @@ struct AddItemView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var userManager = UserManager.shared
     
+    // Binding to control presentation from parent
     @Binding var isPresented: Bool
     
     // Form State
@@ -13,6 +14,7 @@ struct AddItemView: View {
     @State private var description = ""
     @State private var category = "Electronics"
     @State private var condition = "Good"
+    @State private var estimatedValue = "" // Price Input
     
     // Donation Toggle
     @State private var isDonation = false
@@ -32,7 +34,7 @@ struct AddItemView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
     
-    // Categories & Conditions
+    // Data Sources
     let categories = [
         "Electronics", "Video Games", "Fashion", "Shoes",
         "Books", "Sports", "Home & Garden", "Collectibles", "Other"
@@ -43,558 +45,421 @@ struct AddItemView: View {
         NavigationStack {
             ZStack {
                 // 1. Global Background
-                LiquidBackground()
+                LiquidBackground().ignoresSafeArea()
                 
                 ScrollView {
                     VStack(spacing: 24) {
                         
                         // Header Spacer
-                        Spacer().frame(height: 10)
+                        Spacer().frame(height: 20)
                         
-                        // 2. IMAGE SECTION (Glass Card)
+                        // 2. Image Picker Section
                         imageSection
-                            .padding(.horizontal, 20)
                         
-                        // 3. LISTING TYPE TOGGLE
-                        listingTypeToggle
-                            .padding(.horizontal, 20)
+                        // 3. AI Analysis Button (Premium Feature)
+                        if userManager.isPremium {
+                            aiAnalyzeButton
+                        }
                         
-                        // 4. FORM FIELDS (Glass Card)
-                        formFieldsSection
-                            .padding(.horizontal, 20)
+                        // 4. Form Fields
+                        VStack(spacing: 20) {
+                            LocalGlassTextField(icon: "tag.fill", placeholder: "Item Title (e.g., AirPods Pro)", text: $title)
+                            
+                            LocalGlassTextEditor(icon: "text.alignleft", placeholder: "Describe your item...", text: $description)
+                            
+                            // Category & Condition
+                            HStack(spacing: 12) {
+                                LocalGlassPicker(icon: "square.grid.2x2.fill", title: "Category", selection: $category, options: categories)
+                                LocalGlassPicker(icon: "star.fill", title: "Condition", selection: $condition, options: conditions)
+                            }
+                            
+                            // Value / Donation Section
+                            HStack(spacing: 16) {
+                                Toggle(isOn: $isDonation) {
+                                    HStack {
+                                        Image(systemName: "gift.fill")
+                                            .foregroundStyle(.pink)
+                                        Text("Donation")
+                                            .appFont(16, weight: .medium)
+                                            .foregroundStyle(.white)
+                                    }
+                                }
+                                .toggleStyle(SwitchToggleStyle(tint: .pink))
+                                .padding()
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(16)
+                                .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.1), lineWidth: 1))
+                                
+                                if !isDonation {
+                                    LocalGlassTextField(icon: "dollarsign.circle.fill", placeholder: "Value", text: $estimatedValue)
+                                        .keyboardType(.decimalPad)
+                                        .frame(width: 120)
+                                        .transition(.scale.combined(with: .opacity))
+                                }
+                            }
+                        }
+                        .padding(.horizontal)
                         
-                        // 5. CATEGORY & CONDITION (Glass Card)
-                        categoryConditionSection
-                            .padding(.horizontal, 20)
-                        
-                        // Bottom padding for button
                         Spacer().frame(height: 100)
                     }
                 }
+                .scrollDismissesKeyboard(.interactively)
+                
+                // 5. Floating Save Button
+                VStack {
+                    Spacer()
+                    Button(action: saveItem) {
+                        ZStack {
+                            if isSaving {
+                                ProgressView()
+                                    .tint(.black)
+                            } else {
+                                Text("Post Item")
+                                    .appFont(18, weight: .bold)
+                                    .foregroundStyle(.black)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 56)
+                        .background(Color.cyan)
+                        .clipShape(Capsule())
+                        .shadow(color: .cyan.opacity(0.5), radius: 20, x: 0, y: 10)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 20)
+                    }
+                    .disabled(title.isEmpty || selectedImage == nil || isSaving)
+                    .opacity((title.isEmpty || selectedImage == nil) ? 0.5 : 1.0)
+                }
+                
+                // Error Overlay
+                if let error = errorMessage {
+                    VStack {
+                        Text(error)
+                            .appFont(14, weight: .bold)
+                            .foregroundStyle(.white)
+                            .padding()
+                            .background(Color.red.opacity(0.8))
+                            .cornerRadius(10)
+                            .padding(.top, 60)
+                        Spacer()
+                    }
+                    .onAppear {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            errorMessage = nil
+                        }
+                    }
+                }
             }
+            .navigationTitle("New Listing")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.8))
-                            .frame(width: 32, height: 32)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Circle())
-                    }
-                }
-                ToolbarItem(placement: .principal) {
-                    Text(isDonation ? "New Donation" : "New Listing")
-                        .appFont(16, weight: .bold)
+                    Button("Cancel") { dismiss() }
                         .foregroundStyle(.white)
                 }
             }
-            .toolbarBackground(.hidden, for: .navigationBar)
-            // Bottom Action Button (Easy thumb reach)
-            .safeAreaInset(edge: .bottom) {
-                bottomActionButton
-            }
-            // MARK: - Sheets & Dialogs
-            .confirmationDialog("Add Photo", isPresented: $showSourceSelection) {
-                Button("Take Photo") { showCamera = true }
-                Button("Choose from Library") { showPhotoPicker = true }
-                if selectedImage != nil {
-                    Button("Remove Photo", role: .destructive) {
-                        withAnimation { selectedImage = nil }
-                    }
-                }
+            // Image Source Sheet
+            .confirmationDialog("Select Photo", isPresented: $showSourceSelection) {
+                Button("Camera") { showCamera = true }
+                Button("Photo Library") { showPhotoPicker = true }
                 Button("Cancel", role: .cancel) { }
             }
-            .fullScreenCover(isPresented: $showCamera) {
+            // Sheets
+            .sheet(isPresented: $showCamera) {
                 CameraPicker(selectedImage: $selectedImage)
-                    .ignoresSafeArea()
             }
             .photosPicker(isPresented: $showPhotoPicker, selection: $selectedItem, matching: .images)
             .onChange(of: selectedItem) { newItem in
                 Task {
                     if let data = try? await newItem?.loadTransferable(type: Data.self),
                        let image = UIImage(data: data) {
-                        await MainActor.run {
-                            self.selectedImage = image
-                            analyzeImage()
-                        }
+                        await MainActor.run { self.selectedImage = image }
                     }
                 }
-            }
-            .onChange(of: selectedImage) { _ in
-                if title.isEmpty && !isAnalyzing && selectedImage != nil {
-                    analyzeImage()
-                }
-            }
-            .alert("Error", isPresented: .constant(errorMessage != nil)) {
-                Button("OK") { errorMessage = nil }
-            } message: {
-                Text(errorMessage ?? "")
             }
         }
     }
     
-    // MARK: - Image Section
+    // MARK: - Subviews
     
-    private var imageSection: some View {
-        ZStack {
-            if let image = selectedImage {
-                // Image Preview
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(height: 280)
-                    .frame(maxWidth: .infinity)
-                    .clipped()
-                    .cornerRadius(24)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 24)
-                            .stroke(
-                                LinearGradient(
-                                    colors: [.white.opacity(0.4), .white.opacity(0.1)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
-                            )
-                    )
-                    .overlay(
-                        // Edit Button
-                        Button(action: { showSourceSelection = true }) {
-                            Image(systemName: "pencil.circle.fill")
-                                .font(.system(size: 36))
-                                .foregroundStyle(.white)
-                                .shadow(color: .black.opacity(0.3), radius: 5)
-                        }
-                        .padding(16),
-                        alignment: .bottomTrailing
-                    )
-                    .contextMenu {
-                        Button {
-                            showCamera = true
-                        } label: {
-                            Label("Take New Photo", systemImage: "camera")
-                        }
-                        
-                        Button {
-                            showPhotoPicker = true
-                        } label: {
-                            Label("Choose from Library", systemImage: "photo.on.rectangle")
-                        }
-                        
-                        Divider()
-                        
-                        Button(role: .destructive) {
-                            withAnimation { selectedImage = nil }
-                        } label: {
-                            Label("Remove Photo", systemImage: "trash")
-                        }
-                    }
-            } else {
-                // Empty State - Add Photo
-                Button(action: { showSourceSelection = true }) {
-                    VStack(spacing: 16) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.cyan.opacity(0.15))
-                                .frame(width: 80, height: 80)
-                            
-                            Image(systemName: "camera.fill")
-                                .font(.system(size: 32))
-                                .foregroundStyle(.cyan)
-                        }
-                        
-                        VStack(spacing: 6) {
-                            Text("Add Photo")
-                                .appFont(18, weight: .bold)
-                                .foregroundStyle(.white)
-                            
-                            HStack(spacing: 6) {
-                                Image(systemName: "sparkles")
-                                    .font(.system(size: 12))
-                                Text("AI will auto-fill details")
-                                    .appFont(12)
-                            }
-                            .foregroundStyle(.cyan.opacity(0.8))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color.cyan.opacity(0.1))
-                            .clipShape(Capsule())
-                        }
-                    }
-                    .frame(height: 220)
-                    .frame(maxWidth: .infinity)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(24)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 24)
-                            .stroke(
-                                LinearGradient(
-                                    colors: [.white.opacity(0.3), .white.opacity(0.05)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
-                            )
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 24)
-                            .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [8]))
-                            .foregroundStyle(.cyan.opacity(0.3))
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-            
-            // AI Loading Overlay
-            if isAnalyzing {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 24)
-                        .fill(.black.opacity(0.7))
+    var imageSection: some View {
+        Button(action: { showSourceSelection = true }) {
+            ZStack {
+                if let image = selectedImage {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(height: 250)
+                        .clipShape(RoundedRectangle(cornerRadius: 24))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 24)
+                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                        )
                     
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .tint(.cyan)
-                            .scaleEffect(1.3)
-                        
-                        Text("Analyzing Image...")
-                            .appFont(14, weight: .bold)
-                            .foregroundStyle(.white)
-                    }
-                }
-                .frame(height: selectedImage == nil ? 220 : 280)
-            }
-        }
-        .shadow(color: .black.opacity(0.2), radius: 15, y: 8)
-    }
-    
-    // MARK: - Listing Type Toggle
-    
-    private var listingTypeToggle: some View {
-        HStack(spacing: 12) {
-            // Trade Button
-            Button(action: { withAnimation { isDonation = false } }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 14, weight: .bold))
-                    Text("Trade")
-                        .appFont(14, weight: .bold)
-                }
-                .foregroundStyle(isDonation ? .white.opacity(0.6) : .black)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(isDonation ? Color.white.opacity(0.1) : Color.cyan)
-                .cornerRadius(14)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.white.opacity(isDonation ? 0.1 : 0), lineWidth: 1)
-                )
-            }
-            
-            // Donate Button
-            Button(action: { withAnimation { isDonation = true } }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "gift.fill")
-                        .font(.system(size: 14, weight: .bold))
-                    Text("Donate")
-                        .appFont(14, weight: .bold)
-                }
-                .foregroundStyle(isDonation ? .black : .white.opacity(0.6))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(isDonation ? Color.green : Color.white.opacity(0.1))
-                .cornerRadius(14)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.white.opacity(isDonation ? 0 : 0.1), lineWidth: 1)
-                )
-            }
-        }
-        .padding(4)
-        .background(.ultraThinMaterial)
-        .cornerRadius(18)
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-        )
-    }
-    
-    // MARK: - Form Fields Section
-    
-    private var formFieldsSection: some View {
-        VStack(spacing: 20) {
-            // Title Input
-            GlassFormField(
-                label: "TITLE",
-                placeholder: "e.g. iPhone 13 Pro Max",
-                text: $title
-            )
-            
-            // Description Input
-            GlassFormField(
-                label: "DESCRIPTION",
-                placeholder: "Describe your item...",
-                text: $description,
-                isMultiline: true
-            )
-        }
-        .padding(20)
-        .background(.ultraThinMaterial)
-        .cornerRadius(24)
-        .overlay(
-            RoundedRectangle(cornerRadius: 24)
-                .stroke(
-                    LinearGradient(
-                        colors: [.white.opacity(0.3), .white.opacity(0.05)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        )
-        .shadow(color: .black.opacity(0.15), radius: 10, y: 5)
-    }
-    
-    // MARK: - Category & Condition Section
-    
-    private var categoryConditionSection: some View {
-        HStack(spacing: 12) {
-            // Category Picker
-            GlassPickerField(
-                label: "CATEGORY",
-                selection: category,
-                options: categories,
-                icon: "square.grid.2x2"
-            ) { selected in
-                category = selected
-            }
-            
-            // Condition Picker
-            GlassPickerField(
-                label: "CONDITION",
-                selection: condition,
-                options: conditions,
-                icon: "star.fill"
-            ) { selected in
-                condition = selected
-            }
-        }
-    }
-    
-    // MARK: - Bottom Action Button
-    
-    private var bottomActionButton: some View {
-        VStack(spacing: 0) {
-            Button(action: saveItem) {
-                HStack(spacing: 10) {
-                    if isSaving {
-                        ProgressView()
-                            .tint(isDonation ? .black : .black)
-                        Text("Posting...")
-                            .appFont(16, weight: .bold)
-                    } else {
-                        Image(systemName: isDonation ? "gift.fill" : "plus.circle.fill")
-                            .font(.system(size: 18, weight: .bold))
-                        Text(isDonation ? "Post Donation" : "Post Listing")
-                            .appFont(16, weight: .bold)
-                    }
-                }
-                .foregroundStyle(isValid ? .black : .white.opacity(0.4))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 18)
-                .background(
-                    Group {
-                        if isValid {
-                            isDonation ? Color.green : Color.cyan
-                        } else {
-                            Color.white.opacity(0.1)
+                    // Edit Badge
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Image(systemName: "pencil.circle.fill")
+                                .font(.title)
+                                .foregroundStyle(.white)
+                                .shadow(radius: 5)
+                                .padding(12)
                         }
+                        Spacer()
                     }
-                )
-                .cornerRadius(20)
-                .shadow(color: isValid ? (isDonation ? .green.opacity(0.4) : .cyan.opacity(0.4)) : .clear, radius: 15, y: 5)
+                } else {
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(Color.black.opacity(0.3))
+                        .frame(height: 250)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 24)
+                                .stroke(style: StrokeStyle(lineWidth: 2, dash: [10]))
+                                .foregroundStyle(Color.white.opacity(0.3))
+                        )
+                    
+                    VStack(spacing: 12) {
+                        Image(systemName: "camera.fill")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.cyan)
+                        
+                        Text("Add Photo")
+                            .appFont(16, weight: .bold)
+                            .foregroundStyle(.white)
+                        
+                        Text("Tap to select")
+                            .appFont(14)
+                            .foregroundStyle(.white.opacity(0.5))
+                    }
+                }
             }
-            .disabled(!isValid || isSaving)
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+            .padding(.horizontal)
+            .shadow(color: .black.opacity(0.2), radius: 15, y: 10)
         }
-        .background(.ultraThinMaterial)
-        .overlay(
-            Rectangle()
-                .frame(height: 1)
-                .foregroundStyle(Color.white.opacity(0.1)),
-            alignment: .top
-        )
     }
     
-    // MARK: - Helpers
-    
-    var isValid: Bool {
-        !title.isEmpty && selectedImage != nil
+    var aiAnalyzeButton: some View {
+        Button(action: analyzeImage) {
+            HStack(spacing: 8) {
+                if isAnalyzing {
+                    ProgressView().tint(.white)
+                } else {
+                    Image(systemName: "sparkles")
+                }
+                Text(isAnalyzing ? "Analyzing..." : "Auto-Fill with AI")
+            }
+            .appFont(14, weight: .bold)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(
+                LinearGradient(colors: [.purple, .blue], startPoint: .leading, endPoint: .trailing)
+            )
+            .clipShape(Capsule())
+            .shadow(color: .purple.opacity(0.5), radius: 10, x: 0, y: 5)
+        }
+        .disabled(selectedImage == nil || isAnalyzing)
+        .opacity(selectedImage == nil ? 0.0 : 1.0)
+        .animation(.spring(), value: selectedImage)
     }
     
-    // MARK: - Logic
+    // MARK: - Actions
     
     func analyzeImage() {
+        // ✨ Placeholder for future AI integration
+        // Requires ImageAnalyzer to have a shared singleton
         guard selectedImage != nil else { return }
         isAnalyzing = true
         
-        Task {
-            // Simulate AI Delay
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            
-            await MainActor.run {
-                self.isAnalyzing = false
-                print("🤖 AI Analysis Complete")
-            }
+        // Simulating analysis delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            isAnalyzing = false
+            title = "Detected Item"
+            category = "Electronics"
+            Haptics.shared.playSuccess()
         }
     }
     
     func saveItem() {
-        guard let userId = userManager.currentUser?.id else { return }
-        guard let inputImage = selectedImage else { return }
-        
-        let latitude = LocationManager.shared.userLocation?.coordinate.latitude ?? 0.0
-        let longitude = LocationManager.shared.userLocation?.coordinate.longitude ?? 0.0
+        guard let image = selectedImage else { return }
+        guard let user = userManager.currentUser else { return }
+        guard let location = LocationManager.shared.userLocation?.coordinate else {
+            errorMessage = "Please enable location to post."
+            return
+        }
         
         isSaving = true
-        Haptics.shared.playLight()
+        Haptics.shared.playMedium()
         
         Task {
             do {
-                let imageUrl = try await DatabaseService.shared.uploadImage(inputImage)
+                // 1. Upload Image
+                let imageUrl = try await DatabaseService.shared.uploadImage(image)
                 
+                // 2. Prepare Data
+                // If Donation, price is nil or 0. If not, parse the text.
+                let finalPrice: Double? = isDonation ? nil : Double(estimatedValue)
+                
+                // 3. Init TradeItem with the new fields
                 let newItem = TradeItem(
                     id: UUID(),
-                    ownerId: userId,
+                    ownerId: user.id,
                     title: title,
-                    description: description,
-                    condition: condition,
+                    description: description.isEmpty ? "No description provided." : description,
+                    condition: condition, // Passed correctly
                     category: category,
                     imageUrl: imageUrl,
                     createdAt: Date(),
+                    price: finalPrice,    // Passed correctly
                     isDonation: isDonation,
-                    distance: 0.0,
-                    latitude: latitude,
-                    longitude: longitude
+                    distance: 0.0,        // UI default
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                    
+                    // Owner info (Optimistic update for UI, not saved to DB items table)
+                    ownerRating: 0.0,
+                    ownerReviewCount: 0,
+                    ownerUsername: user.username,
+                    ownerIsVerified: user.isVerified,
+                    ownerTradeCount: 0,
+                    ownerIsPremium: user.isPremium
                 )
                 
+                // 4. Save to DB
                 try await DatabaseService.shared.createItem(item: newItem)
                 
-                Haptics.shared.playSuccess()
                 await MainActor.run {
                     isSaving = false
+                    Haptics.shared.playSuccess()
+                    dismiss()
                     isPresented = false
                 }
             } catch {
                 await MainActor.run {
-                    errorMessage = "Failed to post: \(error.localizedDescription)"
                     isSaving = false
+                    errorMessage = "Failed to post item: \(error.localizedDescription)"
                     Haptics.shared.playError()
                 }
             }
         }
     }
-}
-
-// MARK: - Glass Form Field Component
-
-struct GlassFormField: View {
-    let label: String
-    let placeholder: String
-    @Binding var text: String
-    var isMultiline: Bool = false
     
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(label)
-                .appFont(10, weight: .bold)
-                .foregroundStyle(.white.opacity(0.5))
-                .tracking(1)
-            
-            if isMultiline {
-                TextField(placeholder, text: $text, axis: .vertical)
-                    .lineLimit(3...6)
-                    .appFont(16)
-                    .foregroundStyle(.white)
-                    .padding(16)
-                    .background(Color.white.opacity(0.08))
-                    .cornerRadius(14)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                    )
-            } else {
+    // MARK: - Reusable Glass Components (Locally Scoped)
+    
+    struct LocalGlassTextField: View {
+        let icon: String
+        let placeholder: String
+        @Binding var text: String
+        
+        var body: some View {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                    .foregroundStyle(.cyan)
+                    .frame(width: 24)
+                
                 TextField(placeholder, text: $text)
-                    .appFont(16)
+                    .placeholder(when: text.isEmpty) {
+                        Text(placeholder).foregroundStyle(.white.opacity(0.4))
+                    }
                     .foregroundStyle(.white)
-                    .padding(16)
-                    .background(Color.white.opacity(0.08))
-                    .cornerRadius(14)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                    )
             }
+            .padding()
+            .background(.ultraThinMaterial)
+            .cornerRadius(16)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+            )
         }
     }
-}
-
-// MARK: - Glass Picker Field Component
-
-struct GlassPickerField: View {
-    let label: String
-    let selection: String
-    let options: [String]
-    let icon: String
-    let onSelect: (String) -> Void
     
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(label)
-                .appFont(10, weight: .bold)
-                .foregroundStyle(.white.opacity(0.5))
-                .tracking(1)
-            
-            Menu {
-                ForEach(options, id: \.self) { option in
-                    Button(action: { onSelect(option) }) {
-                        HStack {
-                            Text(option)
-                            if option == selection {
-                                Image(systemName: "checkmark")
+    struct LocalGlassTextEditor: View {
+        let icon: String
+        let placeholder: String
+        @Binding var text: String
+        
+        var body: some View {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                    .foregroundStyle(.cyan)
+                    .frame(width: 24)
+                    .padding(.top, 4)
+                
+                ZStack(alignment: .topLeading) {
+                    if text.isEmpty {
+                        Text(placeholder)
+                            .foregroundStyle(.white.opacity(0.4))
+                            .padding(.top, 8)
+                    }
+                    
+                    TextEditor(text: $text)
+                        .scrollContentBackground(.hidden)
+                        .foregroundStyle(.white)
+                        .frame(height: 100)
+                }
+            }
+            .padding()
+            .background(.ultraThinMaterial)
+            .cornerRadius(16)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+            )
+        }
+    }
+    
+    struct LocalGlassPicker: View {
+        let icon: String
+        let title: String
+        @Binding var selection: String
+        let options: [String]
+        
+        var body: some View {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.5))
+                    .tracking(1)
+                
+                Menu {
+                    ForEach(options, id: \.self) { option in
+                        Button(action: { selection = option }) {
+                            HStack {
+                                Text(option)
+                                if option == selection {
+                                    Image(systemName: "checkmark")
+                                }
                             }
                         }
                     }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: icon)
+                            .font(.system(size: 14))
+                            .foregroundStyle(.cyan)
+                        
+                        Text(selection)
+                            .appFont(14, weight: .medium)
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        
+                        Spacer()
+                        
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.4))
+                    }
+                    .padding(14)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(14)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                    )
                 }
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: icon)
-                        .font(.system(size: 14))
-                        .foregroundStyle(.cyan)
-                    
-                    Text(selection)
-                        .appFont(14, weight: .medium)
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                    
-                    Spacer()
-                    
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.4))
-                }
-                .padding(14)
-                .background(.ultraThinMaterial)
-                .cornerRadius(14)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                )
             }
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity)
     }
 }

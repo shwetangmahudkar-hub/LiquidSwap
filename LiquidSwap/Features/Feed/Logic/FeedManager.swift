@@ -16,7 +16,7 @@ class FeedManager: ObservableObject {
     
     // Internal Pagination Trackers
     private var currentPage = 0
-    private let pageSize = 10 // 📉 COST OPTIMIZATION: Only 10 items at a time
+    private let pageSize = 10 // 📉 COST OPTIMIZATION: Keep page size small
     private var canLoadMore = true
     private var isFetchingNextPage = false
     
@@ -75,7 +75,7 @@ class FeedManager: ObservableObject {
         self.isFetchingNextPage = true
         self.debugInfo = "Loading Page \(currentPage)..."
         
-        // 1. Get User ID
+        // 1. Get User ID (Handle both Manager and Session fallback)
         var currentUserId = userManager.currentUser?.id
         if currentUserId == nil {
             if let session = try? await client.auth.session {
@@ -96,11 +96,10 @@ class FeedManager: ObservableObject {
         
         do {
             // 3. Parallel Fetch (Batch + Likes)
-            // We fetch likes every time to ensure we don't show items we just liked in a different session
-            // Note: In a larger app, you'd cache 'likedItems' separately to save reads.
-            async let feedResult = db.fetchFeedItems(currentUserId: userId, page: currentPage, pageSize: pageSize)
+            async let feedResult = db.fetchFeedItems(page: currentPage, pageSize: pageSize)
             async let likesResult = db.fetchLikedItems(userId: userId)
             
+            // Resolve both
             let (fetchedItems, likedItems) = try await (feedResult, likesResult)
             
             // 4. Update Pagination State
@@ -113,12 +112,13 @@ class FeedManager: ObservableObject {
             let likedIDs = Set(likedItems.map { $0.id })
             
             let visibleItems = fetchedItems.filter { item in
+                let isMine = item.ownerId == userId // ✨ FIXED: Filter out my own items
                 let isLiked = likedIDs.contains(item.id)
                 let isBlocked = blockedIDs.contains(item.ownerId)
-                return !isLiked && !isBlocked
+                return !isMine && !isLiked && !isBlocked
             }
             
-            // Recursion: If all items in this batch were filtered out (e.g. all blocked), fetch the next page immediately
+            // Recursion: If all items were filtered out (e.g., page full of my own items), fetch next page immediately
             if visibleItems.isEmpty && canLoadMore {
                 print("⚠️ Page \(currentPage - 1) was empty after filtering. Fetching next page...")
                 self.isFetchingNextPage = false
@@ -126,7 +126,18 @@ class FeedManager: ObservableObject {
                 return
             }
             
-            // 6. Hydration (Background Work)
+            // 6. ✨ BATCH HYDRATION (Optimized)
+            // Instead of fetching profiles one-by-one, we fetch them all at once.
+            
+            // A. Collect Owner IDs
+            let ownerIds = Array(Set(visibleItems.map { $0.ownerId }))
+            
+            // B. Fetch Profiles Batch
+            // We use 'try?' so one failure doesn't kill the whole feed
+            let profiles = try? await db.fetchProfiles(userIds: ownerIds)
+            let profileMap = Dictionary(uniqueKeysWithValues: (profiles ?? []).map { ($0.id, $0) })
+            
+            // C. Hydrate Items
             var enrichedItems: [TradeItem] = []
             
             await withTaskGroup(of: TradeItem.self) { group in
@@ -134,25 +145,29 @@ class FeedManager: ObservableObject {
                     group.addTask {
                         var modifiedItem = item
                         
-                        // A. Calculate Distance
+                        // 1. Calculate Distance (Local Calculation - Fast)
                         if let userLoc = currentUserLocation,
                            let lat = item.latitude,
                            let lon = item.longitude {
                             let itemLoc = CLLocation(latitude: lat, longitude: lon)
-                            modifiedItem.distance = userLoc.distance(from: itemLoc)
+                            modifiedItem.distance = userLoc.distance(from: itemLoc) / 1000.0 // Convert to KM
                         }
                         
-                        // B. Fetch Owner Data (Optimistic)
-                        // Ideally, this should also be joined in the DB query to save reads,
-                        // but for now we parallelize it.
-                        async let rating = self.db.fetchUserRating(userId: item.ownerId)
-                        async let profile = self.db.fetchProfile(userId: item.ownerId)
+                        // 2. Attach Profile (From Batch Map - Instant)
+                        if let profile = profileMap[item.ownerId] {
+                            modifiedItem.ownerUsername = profile.username
+                            modifiedItem.ownerIsVerified = profile.isVerified
+                            modifiedItem.ownerIsPremium = profile.isPremium
+                            modifiedItem.ownerTradeCount = profile.completedTradeCount
+                        } else {
+                            // Fallback if profile missing
+                            modifiedItem.ownerUsername = "Swappr User"
+                        }
                         
-                        let (r, p) = await (try? rating, try? profile)
-                        
-                        modifiedItem.ownerRating = r ?? 0.0
-                        modifiedItem.ownerUsername = p?.username ?? "Trader"
-                        modifiedItem.ownerIsVerified = p?.isVerified ?? false
+                        // 3. Fetch Rating (Individual Fetch - Acceptable for small batch)
+                        if let rating = try? await self.db.fetchUserRating(userId: item.ownerId) {
+                            modifiedItem.ownerRating = rating
+                        }
                         
                         return modifiedItem
                     }
