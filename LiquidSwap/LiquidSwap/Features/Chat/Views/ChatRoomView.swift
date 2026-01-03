@@ -22,7 +22,7 @@ struct ChatRoomView: View {
     @State private var isCompletingTrade = false
     @State private var showNoTradeAlert = false
     @State private var partnerName = "Trading Partner"
-    @State private var showDealDashboard = true // Default to visible for context
+    @State private var showDealDashboard = true
     @State private var showSafeMap = false
     
     // MARK: - Celebration State
@@ -51,7 +51,6 @@ struct ChatRoomView: View {
         return (trade.senderId == myId) ? trade.receiverId : trade.senderId
     }
     
-    // Live messages from ChatManager (Specific to this trade)
     var messages: [Message] {
         return chatManager.conversations[trade.id] ?? []
     }
@@ -62,29 +61,10 @@ struct ChatRoomView: View {
             // 1. Global Background
             LiquidBackground().ignoresSafeArea()
             
-            VStack(spacing: 0) {
-                // 2. Custom Glass Header
-                customHeader
-                    .zIndex(100)
-                
-                // 3. Deal Dashboard (Collapsible)
-                DealDashboard(
-                    trade: trade,
-                    isExpanded: $showDealDashboard,
-                    currentUserId: myId,
-                    onCounter: { showCounterSheet = true }
-                )
-                .zIndex(90)
-                
-                // 4. Message List
-                messageListSection
-                    .onTapGesture {
-                        dismissKeyboard()
-                        withAnimation { showAttachmentOptions = false }
-                    }
-            }
+            // 2. Main Layout
+            mainContent
             
-            // 5. Celebration Overlay
+            // 3. Celebration Overlay
             if showCompletionCelebration {
                 TradeCompletionOverlay(onDismiss: {
                     showCompletionCelebration = false
@@ -95,44 +75,19 @@ struct ChatRoomView: View {
             }
         }
         .navigationBarHidden(true)
-        
-        // MARK: - Input Bar (Bottom Inset)
         .safeAreaInset(edge: .bottom) {
-            ChatInputBar(
-                text: $newMessageText,
-                isPremium: userManager.isPremium,
-                onSend: sendMessage,
-                onMapTap: { showSafeMap = true },
-                onCameraTap: {
-                    if userManager.isPremium {
-                        showCamera = true
-                    } else {
-                        showPremiumPaywall = true
-                    }
-                },
-                onPhotoTap: {
-                    // Handled by PhotosPicker in subview
-                },
-                selectedPhotoItem: $selectedPhotoItem,
-                showOptions: $showAttachmentOptions
-            )
+            inputSection
         }
         .onAppear {
-            TabBarManager.shared.hide()
-            fetchPartnerProfile()
-            
-            // 📉 OPTIMIZATION: Load ONLY this chat's history
-            Task {
-                await chatManager.loadChat(tradeId: trade.id)
-            }
+            setupView()
         }
-        .onDisappear { TabBarManager.shared.show() }
-        
-        // MARK: - Sheets & Alerts
-        .sheet(isPresented: $showPremiumPaywall) {
-            PremiumUpgradeSheet()
-                .presentationDetents([.fraction(0.6)])
+        .onDisappear {
+            TabBarManager.shared.show()
         }
+        .modifier(ChatSheetModifier(
+            isPresented: $showPremiumPaywall,
+            sheetType: .premium
+        ))
         .sheet(isPresented: $showCamera) {
             CameraPicker(selectedImage: $selectedCameraImage).ignoresSafeArea()
         }
@@ -144,20 +99,7 @@ struct ChatRoomView: View {
                 .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showSafeMap) {
-            // Calculate midpoint or default to user location
-            let userLoc = LocationManager.shared.userLocation?.coordinate
-            let start = getCoordinate(for: trade.offeredItem) ?? userLoc ?? CLLocationCoordinate2D(latitude: 43.6532, longitude: -79.3832)
-            let end = getCoordinate(for: trade.wantedItem) ?? userLoc ?? CLLocationCoordinate2D(latitude: 43.6532, longitude: -79.3832)
-            
-            SafeMeetingPointView(
-                locationA: start,
-                locationB: end,
-                onSendLocation: { name, _ in
-                    let msg = "📍 Let's meet at **\(name)**. It's a Verified Safe Zone."
-                    Task { await chatManager.sendMessage(msg, to: partnerId, tradeId: trade.id) }
-                    showSafeMap = false
-                }
-            )
+            safeMapSheet
         }
         .alert("No Trade Found", isPresented: $showNoTradeAlert) {
             Button("OK", role: .cancel) { }
@@ -165,12 +107,7 @@ struct ChatRoomView: View {
             Text("This trade is no longer active.")
         }
         .alert("Block User?", isPresented: $showBlockAlert) {
-            Button("Block", role: .destructive) {
-                Task {
-                    await UserManager.shared.blockUser(userId: partnerId)
-                    dismiss()
-                }
-            }
+            Button("Block", role: .destructive) { blockUser() }
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("You will no longer receive messages from this user.")
@@ -182,46 +119,79 @@ struct ChatRoomView: View {
         } message: {
             Text("Please select a reason for reporting.")
         }
-        // Handle Media Selection
-        .onChange(of: selectedPhotoItem) { newItem in
-            guard let newItem = newItem else { return }
-            Task {
-                if let data = try? await newItem.loadTransferable(type: Data.self) {
-                    await MainActor.run { isSendingImage = true }
-                    await chatManager.sendImage(data: data, to: partnerId, tradeId: trade.id)
-                    await MainActor.run {
-                        isSendingImage = false
-                        selectedPhotoItem = nil
-                        showAttachmentOptions = false
-                    }
+        // Media Handling
+        .onChange(of: selectedPhotoItem) { newItem in handlePhotoSelection(newItem) }
+        .onChange(of: selectedCameraImage) { newImage in handleCameraSelection(newImage) }
+    }
+    
+    // MARK: - Subviews
+    
+    var mainContent: some View {
+        VStack(spacing: 0) {
+            customHeader
+                .zIndex(100)
+            
+            DealDashboard(
+                trade: trade,
+                isExpanded: $showDealDashboard,
+                currentUserId: myId,
+                onCounter: { showCounterSheet = true }
+            )
+            .zIndex(90)
+            
+            messageListSection
+                .onTapGesture {
+                    dismissKeyboard()
+                    withAnimation { showAttachmentOptions = false }
                 }
-            }
         }
-        .onChange(of: selectedCameraImage) { newImage in
-            if let image = newImage, let data = image.jpegData(compressionQuality: 0.7) {
-                Task {
-                    await MainActor.run { isSendingImage = true }
-                    await chatManager.sendImage(data: data, to: partnerId, tradeId: trade.id)
-                    await MainActor.run {
-                        isSendingImage = false
-                        selectedCameraImage = nil
-                        showAttachmentOptions = false
-                    }
+    }
+    
+    var inputSection: some View {
+        ChatInputBar(
+            text: $newMessageText,
+            isPremium: userManager.isPremium,
+            onSend: sendMessage,
+            onMapTap: { showSafeMap = true },
+            onCameraTap: {
+                if userManager.isPremium {
+                    showCamera = true
+                } else {
+                    showPremiumPaywall = true
                 }
+            },
+            onPhotoTap: {
+                // Handled by PhotosPicker in subview
+            },
+            selectedPhotoItem: $selectedPhotoItem,
+            showOptions: $showAttachmentOptions
+        )
+    }
+    
+    var safeMapSheet: some View {
+        let userLoc = LocationManager.shared.userLocation?.coordinate
+        let start = getCoordinate(for: trade.offeredItem) ?? userLoc ?? CLLocationCoordinate2D(latitude: 43.6532, longitude: -79.3832)
+        let end = getCoordinate(for: trade.wantedItem) ?? userLoc ?? CLLocationCoordinate2D(latitude: 43.6532, longitude: -79.3832)
+        
+        return SafeMeetingPointView(
+            locationA: start,
+            locationB: end,
+            onSendLocation: { name, _ in
+                let msg = "📍 Let's meet at **\(name)**. It's a Verified Safe Zone."
+                Task { await chatManager.sendMessage(msg, to: partnerId, tradeId: trade.id) }
+                showSafeMap = false
             }
-        }
+        )
     }
     
     // MARK: - Custom Header
     
     var customHeader: some View {
         HStack(spacing: 16) {
-            // Back Button
             Button(action: { dismiss() }) {
                 GlassNavButton(icon: "arrow.left")
             }
             
-            // Title / Partner Name
             VStack(alignment: .leading, spacing: 2) {
                 Text(partnerName)
                     .font(.headline)
@@ -239,9 +209,7 @@ struct ChatRoomView: View {
             
             Spacer()
             
-            // Actions
             HStack(spacing: 12) {
-                // Action: Complete Trade (Only if Accepted)
                 if trade.status == "accepted" {
                     Button {
                         sendCompletionRequest()
@@ -261,7 +229,6 @@ struct ChatRoomView: View {
                     .disabled(isCompletingTrade)
                 }
                 
-                // Action: Context Menu
                 Menu {
                     Button(role: .destructive, action: { showBlockAlert = true }) {
                         Label("Block User", systemImage: "hand.raised.fill")
@@ -289,7 +256,7 @@ struct ChatRoomView: View {
     
     // MARK: - Message List Section
     
-    private var messageListSection: some View {
+    var messageListSection: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -312,8 +279,6 @@ struct ChatRoomView: View {
                     ForEach(sections, id: \.date) { section in
                         Section(header: DateHeader(date: section.date)) {
                             ForEach(section.messages, id: \.id) { message in
-                                
-                                // SYSTEM MESSAGE
                                 if message.content.hasPrefix("ACTION:") {
                                     TradeActionBubble(
                                         message: message,
@@ -322,9 +287,7 @@ struct ChatRoomView: View {
                                     )
                                     .id(message.id)
                                     .padding(.bottom, 12)
-                                    
                                 } else {
-                                    // STANDARD MESSAGE
                                     MessageBubble(message: message, isCurrentUser: message.senderId == myId)
                                         .id(message.id)
                                         .padding(.bottom, 12)
@@ -358,7 +321,6 @@ struct ChatRoomView: View {
                 }
             }
             .onAppear {
-                // Scroll to bottom on load
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
@@ -382,6 +344,14 @@ struct ChatRoomView: View {
         }
     }
     
+    func setupView() {
+        TabBarManager.shared.hide()
+        fetchPartnerProfile()
+        Task {
+            await chatManager.loadChat(tradeId: trade.id)
+        }
+    }
+    
     func dismissKeyboard() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
@@ -396,7 +366,6 @@ struct ChatRoomView: View {
     func sendCompletionRequest() {
         Haptics.shared.playMedium()
         Task {
-            // Sends a hidden system code
             await chatManager.sendSystemMessage("COMPLETE_REQUEST", to: partnerId, tradeId: trade.id)
         }
     }
@@ -404,7 +373,6 @@ struct ChatRoomView: View {
     func confirmTradeCompletion() {
         Haptics.shared.playSuccess()
         Task {
-            // Actual DB Update
             let success = await TradeManager.shared.completeTrade(with: partnerId)
             if success {
                 await MainActor.run {
@@ -419,17 +387,21 @@ struct ChatRoomView: View {
     }
     
     func fetchPartnerProfile() {
-        // Optimized: Check if TradeManager already has it cached
         if let cached = tradeManager.relatedProfiles[partnerId] {
             self.partnerName = cached.username
             return
         }
-        
-        // Fallback fetch
         Task {
             if let profile = try? await DatabaseService.shared.fetchProfile(userId: partnerId) {
                 await MainActor.run { self.partnerName = profile.username }
             }
+        }
+    }
+    
+    func blockUser() {
+        Task {
+            await UserManager.shared.blockUser(userId: partnerId)
+            dismiss()
         }
     }
     
@@ -446,9 +418,52 @@ struct ChatRoomView: View {
               !lat.isNaN, !lon.isNaN else { return nil }
         return CLLocationCoordinate2D(latitude: lat, longitude: lon)
     }
+    
+    func handlePhotoSelection(_ newItem: PhotosPickerItem?) {
+        guard let newItem = newItem else { return }
+        Task {
+            if let data = try? await newItem.loadTransferable(type: Data.self) {
+                await MainActor.run { isSendingImage = true }
+                await chatManager.sendImage(data: data, to: partnerId, tradeId: trade.id)
+                await MainActor.run {
+                    isSendingImage = false
+                    selectedPhotoItem = nil
+                    showAttachmentOptions = false
+                }
+            }
+        }
+    }
+    
+    func handleCameraSelection(_ newImage: UIImage?) {
+        if let image = newImage, let data = image.jpegData(compressionQuality: 0.7) {
+            Task {
+                await MainActor.run { isSendingImage = true }
+                await chatManager.sendImage(data: data, to: partnerId, tradeId: trade.id)
+                await MainActor.run {
+                    isSendingImage = false
+                    selectedCameraImage = nil
+                    showAttachmentOptions = false
+                }
+            }
+        }
+    }
 }
 
-// MARK: - UI COMPONENTS
+// MARK: - Helper Modifier
+struct ChatSheetModifier: ViewModifier {
+    @Binding var isPresented: Bool
+    enum SheetType { case premium }
+    let sheetType: SheetType
+    
+    func body(content: Content) -> some View {
+        content.sheet(isPresented: $isPresented) {
+            PremiumUpgradeSheet()
+                .presentationDetents([.fraction(0.6)])
+        }
+    }
+}
+
+// MARK: - UI COMPONENTS (ALL INCLUDED)
 
 // 1. DATE HEADER
 struct DateHeader: View {
@@ -474,7 +489,7 @@ struct DateHeader: View {
     }
 }
 
-// 2. DEAL DASHBOARD (Collapsible)
+// 2. DEAL DASHBOARD
 struct DealDashboard: View {
     let trade: TradeOffer
     @Binding var isExpanded: Bool
@@ -561,7 +576,7 @@ struct DealDashboard: View {
                                 }
                                 .padding(.horizontal, 8)
                             }
-                            // Force RTL layout for this scrollview so it starts from right
+                            // Force RTL layout
                             .flipsForRightToLeftLayoutDirection(true)
                             .environment(\.layoutDirection, .rightToLeft)
                         }
@@ -590,10 +605,11 @@ struct DealDashboard: View {
                                 .padding(.bottom, 12)
                         }
                     } else {
-                        HStack(spacing: 6) {
-                            StatusPillSmall(status: trade.status)
-                        }
-                        .padding(.bottom, 12)
+                        // Just status text
+                        Text(trade.status.uppercased())
+                            .font(.caption.bold())
+                            .foregroundStyle(.white.opacity(0.6))
+                            .padding(.bottom, 12)
                     }
                 }
                 .background(Color.black.opacity(0.2))
@@ -796,5 +812,189 @@ struct MessageBubble: View {
             
             if !isCurrentUser { Spacer() }
         }
+    }
+}
+
+struct TradeCompletionOverlay: View {
+    let onDismiss: () -> Void
+    
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.8).ignoresSafeArea()
+            
+            VStack(spacing: 24) {
+                ZStack {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 100, height: 100)
+                        .blur(radius: 20)
+                        .opacity(0.5)
+                    
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 80))
+                        .foregroundStyle(LinearGradient(colors: [.green, .mint], startPoint: .top, endPoint: .bottom))
+                        .shadow(color: .green.opacity(0.5), radius: 20)
+                }
+                .scaleEffect(1.0)
+                .animation(.spring(response: 0.5, dampingFraction: 0.5).repeatCount(1, autoreverses: true), value: true)
+                
+                VStack(spacing: 8) {
+                    Text("Trade Complete!")
+                        .font(.system(size: 32, weight: .heavy, design: .default))
+                        .foregroundStyle(.white)
+                    
+                    Text("The item has been exchanged successfully.")
+                        .font(.body)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .multilineTextAlignment(.center)
+                }
+                
+                Button(action: onDismiss) {
+                    Text("Rate Partner")
+                        .font(.headline)
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 56)
+                        .background(Color.white)
+                        .clipShape(Capsule())
+                }
+                .padding(.horizontal, 40)
+                .padding(.top, 20)
+            }
+        }
+    }
+}
+
+struct SafeSpotItem: Identifiable {
+    let id = UUID()
+    let item: MKMapItem
+}
+
+struct SafeMeetingPointView: View {
+    let locationA: CLLocationCoordinate2D
+    let locationB: CLLocationCoordinate2D
+    var onSendLocation: (String, CLLocationCoordinate2D) -> Void
+    @Environment(\.dismiss) var dismiss
+    
+    @State private var safeSpots: [SafeSpotItem] = []
+    @State private var selectedSpot: SafeSpotItem?
+    @State private var region: MKCoordinateRegion
+    
+    init(locationA: CLLocationCoordinate2D, locationB: CLLocationCoordinate2D, onSendLocation: @escaping (String, CLLocationCoordinate2D) -> Void) {
+        self.locationA = locationA
+        self.locationB = locationB
+        self.onSendLocation = onSendLocation
+        let center = CLLocationCoordinate2D(latitude: (locationA.latitude + locationB.latitude) / 2, longitude: (locationA.longitude + locationB.longitude) / 2)
+        _region = State(initialValue: MKCoordinateRegion(center: center, span: MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)))
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Map(coordinateRegion: $region, annotationItems: safeSpots) { spot in
+                    MapAnnotation(coordinate: spot.item.placemark.coordinate) {
+                        Image(systemName: "shield.fill")
+                            .foregroundStyle(.green)
+                            .font(.title)
+                            .onTapGesture { selectedSpot = spot }
+                    }
+                }
+                .ignoresSafeArea()
+                
+                if let selected = selectedSpot {
+                    VStack {
+                        Spacer()
+                        VStack(spacing: 12) {
+                            Text(selected.item.name ?? "Safe Spot")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                            Button("Send Location") {
+                                onSendLocation(selected.item.name ?? "Safe Spot", selected.item.placemark.coordinate)
+                            }
+                            .padding()
+                            .background(Color.blue)
+                            .cornerRadius(10)
+                            .foregroundStyle(.white)
+                        }
+                        .padding(20)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(20)
+                        .padding(.bottom, 20)
+                    }
+                }
+            }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+            .onAppear { findSafeSpots() }
+        }
+    }
+    
+    func findSafeSpots() {
+        let req = MKLocalSearch.Request()
+        req.naturalLanguageQuery = "Police Station"
+        req.region = region
+        let search = MKLocalSearch(request: req)
+        search.start { response, _ in
+            guard let response = response else { return }
+            self.safeSpots = response.mapItems.prefix(5).map { SafeSpotItem(item: $0) }
+        }
+    }
+}
+
+struct TradeActionBubble: View {
+    let message: Message
+    let isMine: Bool
+    let onConfirm: () -> Void
+    
+    var body: some View {
+        HStack {
+            if isMine { Spacer() }
+            
+            VStack(spacing: 12) {
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(LinearGradient(colors: [.cyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.white)
+                }
+                .shadow(color: .cyan.opacity(0.5), radius: 10)
+                
+                // Text
+                Text(isMine ? "You requested to complete the trade." : "Partner wants to complete the trade.")
+                    .font(.system(size: 14, weight: .bold))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white)
+                
+                // Action Button (Only for receiver)
+                if !isMine {
+                    Button(action: onConfirm) {
+                        Text("Confirm Completion")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .background(Color.cyan)
+                            .clipShape(Capsule())
+                    }
+                } else {
+                    Text("Waiting for confirmation...")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+            }
+            .padding(20)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24)
+                    .stroke(LinearGradient(colors: [.white.opacity(0.4), .white.opacity(0.1)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+            )
+            .padding(.horizontal, 40)
+            
+            if !isMine { Spacer() }
+        }
+        .padding(.vertical, 8)
     }
 }
