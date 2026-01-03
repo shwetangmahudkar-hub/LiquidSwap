@@ -93,7 +93,7 @@ class DatabaseService {
         return try await client
             .from("items")
             .select()
-            .in("id", value: uniqueIds)
+            .in("id", values: uniqueIds) // Fix: Renamed 'value' to 'values'
             .execute()
             .value
     }
@@ -135,7 +135,7 @@ class DatabaseService {
         let profiles: [UserProfile] = try await client
             .from("profiles")
             .select()
-            .in("id", value: uniqueIds)
+            .in("id", values: uniqueIds) // Fix: Renamed 'value' to 'values'
             .execute()
             .value
         
@@ -218,7 +218,7 @@ class DatabaseService {
         let likes: [LikeEntry] = try await client
             .from("likes")
             .select()
-            .in("item_id", value: myItemIds)
+            .in("item_id", values: myItemIds) // Fix: Renamed 'value' to 'values'
             .order("created_at", ascending: false)
             .execute()
             .value
@@ -281,7 +281,7 @@ class DatabaseService {
         return try await client
             .from("items")
             .select()
-            .in("id", value: ids)
+            .in("id", values: ids) // Fix: Renamed 'value' to 'values'
             .execute()
             .value
     }

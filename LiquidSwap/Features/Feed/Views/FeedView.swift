@@ -1,6 +1,6 @@
 import SwiftUI
 
-@available(iOS 17.0, *)
+// ✅ REMOVED: @available(iOS 17.0, *) - Now works on iOS 16.6+
 struct FeedView: View {
     // MARK: - Dependencies
     @ObservedObject var feedManager = FeedManager.shared
@@ -23,6 +23,9 @@ struct FeedView: View {
     @State private var heartScale: CGFloat = 0.5
     @State private var heartRotation: Double = 0
     @State private var dragOffsetY: CGFloat = 0
+    
+    // ✅ iOS 16.6 FIX: State for empty view pulse animation
+    @State private var emptyStatePulse = false
     
     // MARK: - State: Gamification (XP & Combo)
     @State private var xpToasts: [XPToast] = []
@@ -67,6 +70,7 @@ struct FeedView: View {
                     progressionHeader
                     Spacer()
                 }
+                .zIndex(10) // ✅ FIX: Bring header above card stack
                 
                 // 4. Interaction Feedback Layers
                 if showHeartOverlay {
@@ -118,7 +122,8 @@ struct FeedView: View {
                 previousLevel = userManager.currentLevel.tier
                 showRandomAchievementHint()
             }
-            .onChange(of: userManager.currentLevel.tier) { oldValue, newValue in
+            // ✅ iOS 16.6 FIX: Use single-parameter .onChange syntax
+            .onChange(of: userManager.currentLevel.tier) { newValue in
                 if newValue > previousLevel { triggerBigCelebration() }
                 previousLevel = newValue
             }
@@ -278,12 +283,21 @@ struct FeedView: View {
         .padding(.top, 60)
     }
     
+    // ✅ iOS 16.6 FIX: Custom pulse animation instead of .symbolEffect
     private var emptyStateView: some View {
         VStack(spacing: 20) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 80))
                 .foregroundStyle(.cyan)
-                .symbolEffect(.bounce, options: .repeating)
+                .scaleEffect(emptyStatePulse ? 1.1 : 1.0)
+                .opacity(emptyStatePulse ? 1.0 : 0.8)
+                .animation(
+                    .easeInOut(duration: 1.2).repeatForever(autoreverses: true),
+                    value: emptyStatePulse
+                )
+                .onAppear {
+                    emptyStatePulse = true
+                }
             
             Text("All Caught Up!")
                 .font(.title2).bold()
@@ -295,7 +309,9 @@ struct FeedView: View {
             
             Button("Refresh Feed") {
                 Haptics.shared.playMedium()
-                Task { await feedManager.fetchFeed() }
+                Task {
+                    await feedManager.fetchFeed()
+                }
             }
             .buttonStyle(.borderedProminent)
             .tint(.white.opacity(0.2))

@@ -23,6 +23,9 @@ struct EditProfileView: View {
     ]
     
     var body: some View {
+        // 🛠️ FIX: Capture MainActor-isolated property here to use safely in closures
+        let currentAvatarUrl = userManager.currentUser?.avatarUrl
+        
         ZStack {
             // 1. Global Background
             LiquidBackground()
@@ -66,7 +69,7 @@ struct EditProfileView: View {
                                             .scaledToFill()
                                             .frame(width: 130, height: 130)
                                             .clipShape(Circle())
-                                    } else if let urlString = userManager.currentUser?.avatarUrl {
+                                    } else if let urlString = currentAvatarUrl { // 🛠️ FIX: Use captured variable
                                         AsyncImageView(filename: urlString)
                                             .scaledToFill()
                                             .frame(width: 130, height: 130)

@@ -172,11 +172,13 @@ class ChatManager: ObservableObject {
         let newChannel = client.channel("public:messages")
         self.channel = newChannel
         
+        // Fix: Use the standard syntax. This ensures compatibility and successful build.
+        // We filter for INSERT events where the receiver is the current user.
         let changeStream = newChannel.postgresChange(
             AnyAction.self,
             schema: "public",
             table: "messages",
-            filter: "receiver_id=eq.\(userId)" // ✨ Only listen to messages for ME
+            filter: "receiver_id=eq.\(userId)"
         )
         
         do {

@@ -409,6 +409,7 @@
 				DEVELOPMENT_TEAM = 59DV2G7X9Z;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.shopping";
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need access to your camera to let you take photos of your items.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to show local trade offers.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -444,6 +445,7 @@
 				DEVELOPMENT_TEAM = 59DV2G7X9Z;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.shopping";
 				INFOPLIST_KEY_NSCameraUsageDescription = "We need access to your camera to let you take photos of your items.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to show local trade offers.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

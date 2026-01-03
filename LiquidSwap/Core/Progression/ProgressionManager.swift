@@ -5,7 +5,6 @@
 //  Created by Shwetang Mahudkar on 2026-01-02.
 //
 
-
 import Foundation
 import SwiftUI
 import Combine
@@ -79,7 +78,7 @@ class ProgressionManager: ObservableObject {
     
     /// Next closest achievement to unlock (highest progress that isn't complete)
     var nextAchievementToUnlock: AchievementType? {
-        let unlockedTypes = Set(unlockedAchievements.map { $0.type })
+        _ = Set(unlockedAchievements.map { $0.type })
         
         return lockedAchievements
             .compactMap { type -> (AchievementType, Double)? in
@@ -115,11 +114,12 @@ class ProgressionManager: ObservableObject {
             
             // 3. Build context and calculate progress
             let context = AchievementCheckContext.fromUserManager(userManager, additionalData: additionalData)
-            let unlockedTypes = Set(unlocked.map { $0.type })
             
             var progress: [AchievementType: AchievementProgress] = [:]
             for type in AchievementType.allCases {
-                progress[type] = context.progress(for: type, isUnlocked: unlockedTypes.contains(type))
+                // Fix: Removed unused 'unlockedTypes' set and checked array directly to silence warning
+                let isUnlocked = unlocked.contains { $0.type == type }
+                progress[type] = context.progress(for: type, isUnlocked: isUnlocked)
             }
             self.achievementProgress = progress
             

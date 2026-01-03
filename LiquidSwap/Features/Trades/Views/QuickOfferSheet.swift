@@ -20,7 +20,10 @@ struct QuickOfferSheet: View {
     @State private var isSending = false
     @State private var showSuccess = false
     
-    // ✨ NEW: Calculate items that are already in pending/accepted trades
+    // ✅ NEW: Add Item Sheet State
+    @State private var showAddItemSheet = false
+    
+    // ✨ Calculate items that are already in pending/accepted trades
     // This prevents double-booking items and saves server errors.
     var busyItemIds: Set<UUID> {
         guard let myId = userManager.currentUser?.id else { return [] }
@@ -100,73 +103,11 @@ struct QuickOfferSheet: View {
                             .padding(.horizontal, 24)
                         
                         if userManager.userItems.isEmpty {
-                            VStack(spacing: 16) {
-                                Spacer()
-                                Circle()
-                                    .fill(Color.white.opacity(0.05))
-                                    .frame(width: 80, height: 80)
-                                    .overlay(
-                                        Image(systemName: "archivebox")
-                                            .font(.system(size: 32))
-                                            .foregroundStyle(.white.opacity(0.3))
-                                    )
-                                
-                                Text("Your inventory is empty")
-                                    .font(.headline)
-                                    .foregroundStyle(.white.opacity(0.7))
-                                
-                                Text("Add items to your profile to start trading.")
-                                    .font(.caption)
-                                    .foregroundStyle(.white.opacity(0.5))
-                                Spacer()
-                            }
-                            .frame(maxWidth: .infinity)
+                            // ✅ UPDATED: Empty State with Add Item Button
+                            emptyInventoryView
                         } else {
-                            ScrollView(showsIndicators: false) {
-                                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                                    ForEach(userManager.userItems) { myItem in
-                                        let isBusy = busyItemIds.contains(myItem.id)
-                                        let isSelected = selectedItemId == myItem.id
-                                        
-                                        // Custom Card Logic for Busy State
-                                        Button(action: {
-                                            if !isBusy {
-                                                withAnimation(.spring(response: 0.3)) {
-                                                    selectedItemId = (selectedItemId == myItem.id) ? nil : myItem.id
-                                                    Haptics.shared.playLight()
-                                                }
-                                            } else {
-                                                Haptics.shared.playError()
-                                            }
-                                        }) {
-                                            InventoryItemCard(item: myItem, isSelected: isSelected)
-                                                // ✨ BUSY OVERLAY
-                                                .overlay(
-                                                    ZStack {
-                                                        if isBusy {
-                                                            Color.black.opacity(0.6)
-                                                                .cornerRadius(16)
-                                                            
-                                                            VStack(spacing: 4) {
-                                                                Image(systemName: "lock.fill")
-                                                                Text("PENDING")
-                                                                    .font(.system(size: 10, weight: .black))
-                                                            }
-                                                            .foregroundStyle(.white.opacity(0.8))
-                                                        }
-                                                    }
-                                                )
-                                                // Grayscale busy items
-                                                .saturation(isBusy ? 0 : 1)
-                                                .scaleEffect(isSelected ? 0.98 : 1)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .disabled(isBusy)
-                                    }
-                                }
-                                .padding(.horizontal, 20)
-                                .padding(.bottom, 120) // Space for floating button
-                            }
+                            // ✅ UPDATED: Grid with Add Item Card
+                            inventoryGridView
                         }
                     }
                     
@@ -214,6 +155,128 @@ struct QuickOfferSheet: View {
             .onChange(of: showSuccess) { newValue in
                 if newValue { dismiss() }
             }
+            // ✅ NEW: Add Item Sheet (Slide-up)
+            .sheet(isPresented: $showAddItemSheet) {
+                AddItemView(isPresented: $showAddItemSheet)
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+            }
+        }
+    }
+    
+    // MARK: - Empty Inventory View
+    
+    private var emptyInventoryView: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            
+            // Icon
+            ZStack {
+                Circle()
+                    .fill(Color.cyan.opacity(0.1))
+                    .frame(width: 100, height: 100)
+                
+                Image(systemName: "shippingbox.fill")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.cyan.opacity(0.6))
+            }
+            
+            // Text
+            VStack(spacing: 8) {
+                Text("Your inventory is empty")
+                    .font(.headline)
+                    .foregroundStyle(.white.opacity(0.9))
+                
+                Text("Add an item to make an offer")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.5))
+                    .multilineTextAlignment(.center)
+            }
+            
+            // ✅ NEW: Add Item Button (Compact, Bottom-positioned)
+            Button(action: {
+                Haptics.shared.playMedium()
+                showAddItemSheet = true
+            }) {
+                HStack(spacing: 10) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 20))
+                    Text("Add Your First Item")
+                        .font(.system(size: 16, weight: .bold))
+                }
+                .foregroundStyle(.black)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 14)
+                .background(Color.cyan)
+                .clipShape(Capsule())
+                .shadow(color: .cyan.opacity(0.4), radius: 10, y: 5)
+            }
+            .padding(.top, 8)
+            
+            Spacer()
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    // MARK: - Inventory Grid View
+    
+    private var inventoryGridView: some View {
+        ScrollView(showsIndicators: false) {
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                
+                // ✅ NEW: Add Item Card (Always First)
+                Button(action: {
+                    Haptics.shared.playMedium()
+                    showAddItemSheet = true
+                }) {
+                    AddItemCard()
+                }
+                .buttonStyle(.plain)
+                
+                // Existing Items
+                ForEach(userManager.userItems) { myItem in
+                    let isBusy = busyItemIds.contains(myItem.id)
+                    let isSelected = selectedItemId == myItem.id
+                    
+                    // Custom Card Logic for Busy State
+                    Button(action: {
+                        if !isBusy {
+                            withAnimation(.spring(response: 0.3)) {
+                                selectedItemId = (selectedItemId == myItem.id) ? nil : myItem.id
+                                Haptics.shared.playLight()
+                            }
+                        } else {
+                            Haptics.shared.playError()
+                        }
+                    }) {
+                        InventoryItemCard(item: myItem, isSelected: isSelected)
+                            // ✨ BUSY OVERLAY
+                            .overlay(
+                                ZStack {
+                                    if isBusy {
+                                        Color.black.opacity(0.6)
+                                            .cornerRadius(16)
+                                        
+                                        VStack(spacing: 4) {
+                                            Image(systemName: "lock.fill")
+                                            Text("PENDING")
+                                                .font(.system(size: 10, weight: .black))
+                                        }
+                                        .foregroundStyle(.white.opacity(0.8))
+                                    }
+                                }
+                            )
+                            // Grayscale busy items
+                            .saturation(isBusy ? 0 : 1)
+                            .scaleEffect(isSelected ? 0.98 : 1)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isBusy)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 120) // Space for floating button
         }
     }
     
@@ -239,5 +302,54 @@ struct QuickOfferSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Add Item Card Component (Glassmorphism)
+
+struct AddItemCard: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            
+            // Plus Icon with Glow
+            ZStack {
+                Circle()
+                    .fill(Color.cyan.opacity(0.15))
+                    .frame(width: 50, height: 50)
+                
+                Image(systemName: "plus")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(.cyan)
+            }
+            
+            Text("Add Item")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white.opacity(0.7))
+            
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 160)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(
+                    LinearGradient(
+                        colors: [.cyan.opacity(0.5), .cyan.opacity(0.1)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1.5
+                )
+        )
+        .overlay(
+            // Dashed Inner Border
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                .foregroundStyle(.cyan.opacity(0.3))
+                .padding(8)
+        )
     }
 }
