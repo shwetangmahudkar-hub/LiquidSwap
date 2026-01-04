@@ -3,10 +3,11 @@ import SwiftUI
 struct InventoryView: View {
     @ObservedObject var userManager = UserManager.shared
     
-    // ✨ 1. Access the global Modal Manager
-    @EnvironmentObject var modalManager: ModalManager
-    
-    // Local Sheet State (Only for specific item details, not global screens)
+    // Sheet States
+    @State private var showAddItemSheet = false
+    @State private var showSettings = false
+    @State private var showEditProfile = false
+    @State private var showActivityHub = false
     @State private var selectedItem: TradeItem?
     
     // Animation State
@@ -49,11 +50,11 @@ struct InventoryView: View {
                                 streak: userManager.currentStreak
                             )
                             
-                            // --- ACTION BUTTONS (Updated to use ModalManager) ---
+                            // --- ACTION BUTTONS ---
                             ActionButtonsRow(
-                                onEdit: { modalManager.show(.editProfile) },
-                                onActivity: { modalManager.show(.activityHub) },
-                                onSettings: { modalManager.show(.settings) }
+                                onEdit: { showEditProfile = true },
+                                onActivity: { showActivityHub = true },
+                                onSettings: { showSettings = true }
                             )
                             
                             // --- INVENTORY GRID ---
@@ -72,8 +73,7 @@ struct InventoryView: View {
                             
                             if userManager.userItems.isEmpty {
                                 EmptyInventoryState {
-                                    // ✨ Trigger Glass Modal
-                                    modalManager.show(.addItem)
+                                    showAddItemSheet = true
                                 }
                             } else {
                                 InventoryGrid(items: userManager.userItems) { item in
@@ -98,8 +98,7 @@ struct InventoryView: View {
                         Spacer()
                         Button(action: {
                             Haptics.shared.playMedium()
-                            // ✨ Trigger Glass Modal
-                            modalManager.show(.addItem)
+                            showAddItemSheet = true
                         }) {
                             Image(systemName: "plus")
                                 .font(.system(size: 24, weight: .bold))
@@ -119,8 +118,23 @@ struct InventoryView: View {
                 }
             }
             .navigationBarHidden(true)
-            // Note: Global modals (AddItem, Settings, etc.) are now handled in ContentView.
-            // Only local data-dependent sheets remain here.
+            .sheet(isPresented: $showAddItemSheet) {
+                // ✅ FIX: Passed the required binding to AddItemView
+                AddItemView(isPresented: $showAddItemSheet)
+                    .presentationDetents([.large])
+            }
+            .sheet(isPresented: $showEditProfile) {
+                EditProfileView()
+                    .presentationDetents([.medium, .large])
+            }
+            .sheet(isPresented: $showActivityHub) {
+                ActivityHubView()
+                    .presentationDetents([.large])
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
+                    .presentationDetents([.medium, .large])
+            }
             .sheet(item: $selectedItem) { item in
                 EditItemView(item: item)
                     .presentationDetents([.large])
@@ -130,7 +144,8 @@ struct InventoryView: View {
             withAnimation(.spring(duration: 0.8)) {
                 appearAnimation = true
             }
-            // Optimization: Rely on UserManager's initial load or refreshable
+            // Ensure fresh data on appear
+            Task { await userManager.loadUserData() }
         }
     }
 }
