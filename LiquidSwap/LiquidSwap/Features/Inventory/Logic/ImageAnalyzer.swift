@@ -8,85 +8,126 @@ struct ImageAnalyzer {
         case processingFailed
     }
     
-    /// Analyzes an image and returns the most confident label (e.g., "Laptop")
+    // MARK: - Configuration
+    
+    /// Keywords mapped to App Categories for intelligent scoring
+    private static let categoryRules: [String: [String]] = [
+        "Video Games": ["console", "game", "xbox", "playstation", "nintendo", "controller", "joystick", "gamepad", "arcade", "esports"],
+        "Electronics": ["computer", "laptop", "phone", "mobile", "screen", "monitor", "keyboard", "camera", "lens", "headphone", "audio", "speaker", "tablet", "electronic"],
+        "Shoes": ["shoe", "sneaker", "boot", "footwear", "sandal", "heel", "loafer", "cleat", "canvas"],
+        "Fashion": ["clothing", "shirt", "t-shirt", "dress", "pants", "jeans", "jacket", "coat", "apparel", "jersey", "hoodie", "sweater", "accessory", "bag", "purse", "wallet", "watch"],
+        "Books": ["book", "novel", "textbook", "paperback", "hardcover", "fiction", "magazine", "comic", "literature", "library"],
+        "Sports": ["sport", "ball", "racket", "helmet", "bicycle", "bike", "skate", "surf", "gym", "fitness", "exercise", "jersey", "stadium", "roller"],
+        "Home & Garden": ["furniture", "chair", "table", "sofa", "couch", "plant", "flower", "vase", "pot", "lamp", "light", "decor", "kitchen", "appliance", "tool", "garden", "cutlery"],
+        "Collectibles": ["toy", "doll", "figurine", "action figure", "lego", "antique", "vintage", "coin", "card", "memorabilia", "plush"]
+    ]
+    
+    /// Terms that flag an image as potentially unsafe
+    private static let unsafeKeywords: [String] = [
+        "weapon", "gun", "firearm", "pistol", "rifle", "knife", "dagger", "sword", "blade",
+        "blood", "gore", "wound", "injury",
+        "nudity", "erotic", "sexual", "lingerie", "panties", "thong"
+    ]
+    
+    /// ✨ NEW: Contexts where "unsafe" words are actually safe
+    private static let safeExceptions: [String: [String]] = [
+        "knife": ["kitchen", "chef", "butter", "steak", "palette", "plastic", "cutlery", "utensil", "paring"],
+        "gun": ["glue", "massage", "tape", "nerf", "water", "toy", "spray", "caulking"],
+        "blade": ["roller", "fan", "razor", "skate", "wiper", "propeller"],
+        "sword": ["toy", "plastic", "foam", "lego"],
+        "blood": ["orange"], // "Blood Orange"
+        "thong": ["sandal"] // "Thong Sandals"
+    ]
+    
+    // MARK: - Public Actions
+    
+    /// Analyzes an image and returns the most confident labels
     static func analyze(image: UIImage) async throws -> [String] {
         guard let ciImage = CIImage(image: image) else {
             throw AnalysisError.invalidImage
         }
         
-        let handler = VNImageRequestHandler(ciImage: ciImage, options: [:])
-        
-        return try await withCheckedThrowingContinuation { continuation in
-            let request = VNClassifyImageRequest { request, error in
-                if let error = error {
+        // ⚡️ PERFORMANCE: Run on background thread
+        return try await Task.detached(priority: .userInitiated) {
+            let handler = VNImageRequestHandler(ciImage: ciImage, options: [:])
+            
+            return try await withCheckedThrowingContinuation { continuation in
+                let request = VNClassifyImageRequest { request, error in
+                    if let error = error {
+                        continuation.resume(throwing: error)
+                        return
+                    }
+                    
+                    guard let observations = request.results as? [VNClassificationObservation] else {
+                        continuation.resume(returning: [])
+                        return
+                    }
+                    
+                    // Filter: High confidence only
+                    let labels = observations
+                        .filter { $0.confidence > 0.3 }
+                        .prefix(15) // Increased to 15 to catch contextual words (e.g., "Kitchen" + "Knife")
+                        .map { $0.identifier }
+                    
+                    continuation.resume(returning: Array(labels))
+                }
+                
+                do {
+                    try handler.perform([request])
+                } catch {
                     continuation.resume(throwing: error)
-                    return
                 }
-                
-                guard let observations = request.results as? [VNClassificationObservation] else {
-                    continuation.resume(returning: [])
-                    return
-                }
-                
-                // Get top 5 confident labels
-                let labels = observations
-                    .filter { $0.confidence > 0.3 }
-                    .prefix(5)
-                    .map { $0.identifier }
-                
-                continuation.resume(returning: Array(labels))
             }
-            
-            do {
-                try handler.perform([request])
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
+        }.value
     }
     
-    /// Maps Vision labels to our specific App Categories
+    /// Determines the best category match
     static func suggestCategory(from labels: [String]) -> String {
-        // ✨ NEW: Updated Mapping for Granular Categories
+        var scores: [String: Int] = [:]
+        
         for label in labels {
-            let lower = label.lowercased()
+            let lowerLabel = label.lowercased()
             
-            // 🎮 Video Games
-            if lower.contains("console") || lower.contains("gamepad") || lower.contains("joystick") || lower.contains("controller") || lower.contains("xbox") || lower.contains("playstation") || lower.contains("nintendo") { return "Video Games" }
-            
-            // 💻 Electronics (General)
-            if lower.contains("computer") || lower.contains("phone") || lower.contains("monitor") || lower.contains("screen") || lower.contains("camera") || lower.contains("laptop") { return "Electronics" }
-            
-            // 👟 Shoes
-            if lower.contains("shoe") || lower.contains("sneaker") || lower.contains("boot") || lower.contains("footwear") || lower.contains("sandal") { return "Shoes" }
-            
-            // 👕 Fashion (General)
-            if lower.contains("clothing") || lower.contains("jersey") || lower.contains("shirt") || lower.contains("dress") || lower.contains("coat") || lower.contains("jeans") { return "Fashion" }
-            
-            // 📚 Books
-            if lower.contains("book") || lower.contains("novel") || lower.contains("paperback") || lower.contains("textbook") { return "Books" }
-            
-            // ⚽ Sports
-            if lower.contains("ball") || lower.contains("racket") || lower.contains("sport") || lower.contains("bicycle") || lower.contains("helmet") || lower.contains("skate") { return "Sports" }
-            
-            // 🏠 Home
-            if lower.contains("plant") || lower.contains("flower") || lower.contains("vase") || lower.contains("pot") || lower.contains("furniture") || lower.contains("chair") || lower.contains("sofa") || lower.contains("table") { return "Home & Garden" }
-            
-            // 🧸 Collectibles
-            if lower.contains("toy") || lower.contains("doll") || lower.contains("action figure") || lower.contains("figurine") || lower.contains("lego") { return "Collectibles" }
+            for (category, keywords) in categoryRules {
+                if keywords.contains(where: { lowerLabel.contains($0) }) {
+                    scores[category, default: 0] += 1
+                }
+            }
         }
         
-        return "Other" // Default fallback
+        if let bestMatch = scores.max(by: { $0.value < $1.value }), bestMatch.value > 0 {
+            return bestMatch.key
+        }
+        
+        return "Other"
     }
     
-    /// Blocks unsafe content
+    /// ✨ UPDATED: Checks safety with context exceptions
     static func isSafeContent(labels: [String]) -> Bool {
-        let prohibitedTerms = ["weapon", "firearm", "gun", "knife", "blood", "gore", "nudity", "sexual"]
+        // Create a single string for easier context checking
+        let combinedLabels = labels.joined(separator: " ").lowercased()
         
         for label in labels {
-            for term in prohibitedTerms {
-                if label.lowercased().contains(term) {
-                    print("⚠️ SAFETY BLOCK: \(label)")
+            let lowerLabel = label.lowercased()
+            
+            for blockedTerm in unsafeKeywords {
+                // If we find a blocked term...
+                if lowerLabel.contains(blockedTerm) {
+                    
+                    // ...Check if it's in our Safe Exceptions list
+                    if let exceptions = safeExceptions[blockedTerm] {
+                        // If the combined context contains a "saving word" (e.g. "kitchen"), it's safe.
+                        let isSavedByException = exceptions.contains { exception in
+                            return combinedLabels.contains(exception)
+                        }
+                        
+                        if isSavedByException {
+                            print("✅ SAFETY PASS: '\(blockedTerm)' allowed due to context in: \(labels)")
+                            continue // Skip blocking this specific term
+                        }
+                    }
+                    
+                    print("⚠️ SAFETY BLOCK: Image flagged for term '\(blockedTerm)' in label '\(label)'")
                     return false
                 }
             }

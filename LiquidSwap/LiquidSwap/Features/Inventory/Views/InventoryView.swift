@@ -3,10 +3,11 @@ import SwiftUI
 struct InventoryView: View {
     @ObservedObject var userManager = UserManager.shared
     
-    @State private var showAddItemSheet = false
-    @State private var showSettings = false
-    @State private var showEditProfile = false
-    @State private var showActivityHub = false
+    // ✨ 1. Access the global Modal Manager
+    @EnvironmentObject var modalManager: ModalManager
+    
+    // Local Sheet State (Only for specific item details, not global screens)
+    @State private var selectedItem: TradeItem?
     
     // Animation State
     @State private var appearAnimation = false
@@ -19,279 +20,389 @@ struct InventoryView: View {
                 LiquidBackground()
                     .opacity(0.6)
                     .blur(radius: 20)
+                    .ignoresSafeArea()
                 
                 // 2. Main Content
                 if userManager.isLoading && userManager.userItems.isEmpty {
-                    // Only show full screen loader if we have NO data
                     ProgressView()
                         .tint(.cyan)
                         .scaleEffect(1.5)
                 } else {
                     ScrollView(showsIndicators: false) {
-                        VStack(spacing: 16) { // ✨ Reduced spacing from 20 to 16
+                        VStack(spacing: 20) {
                             
-                            // --- TOP BAR ---
-                            HStack {
-                                Text("Profile")
-                                    .appFont(34, weight: .bold)
-                                    .foregroundStyle(.white)
-                                    .shadow(color: .cyan.opacity(0.5), radius: 10)
-                                
-                                Spacer()
-                                
-                                // Settings Button (Glass)
-                                Button(action: { showSettings = true }) {
-                                    Image(systemName: "gearshape.fill")
-                                        .font(.system(size: 18))
-                                        .foregroundStyle(.white.opacity(0.8))
-                                        .frame(width: 44, height: 44)
-                                        .background(.ultraThinMaterial)
-                                        .clipShape(Circle())
-                                        .overlay(Circle().stroke(Color.white.opacity(0.1), lineWidth: 1))
-                                }
-                            }
-                            .padding(.horizontal, 24)
-                            .padding(.top, 20)
+                            // --- PROFILE HEADER ---
+                            ProfileHeader(user: userManager.currentUser)
+                                .padding(.top, 10)
                             
-                            // --- HERO BENTO CARD (Compact) ---
-                            HStack(spacing: 16) {
-                                // Avatar with Level Ring
-                                ZStack {
-                                    Circle()
-                                        .stroke(Color.white.opacity(0.1), lineWidth: 3)
-                                        .frame(width: 76, height: 76) // ✨ Reduced from 88
-                                    
-                                    Circle()
-                                        .trim(from: 0, to: userManager.levelProgress)
-                                        .stroke(
-                                            AngularGradient(colors: [.cyan, .purple, .cyan], center: .center),
-                                            style: StrokeStyle(lineWidth: 3, lineCap: .round)
-                                        )
-                                        .rotationEffect(.degrees(-90))
-                                        .frame(width: 76, height: 76)
-                                        .shadow(color: .cyan.opacity(0.5), radius: 8)
-                                    
-                                    if let avatarUrl = userManager.currentUser?.avatarUrl {
-                                        AsyncImageView(filename: avatarUrl)
-                                            .scaledToFill()
-                                            .frame(width: 68, height: 68)
-                                            .clipShape(Circle())
-                                    } else {
-                                        Image(systemName: "person.circle.fill")
-                                            .resizable()
-                                            .foregroundStyle(.gray)
-                                            .frame(width: 68, height: 68)
-                                    }
-                                }
-                                
-                                // User Info & Rank
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(userManager.currentUser?.username ?? "Loading...")
-                                        .appFont(20, weight: .bold) // ✨ Reduced from 22
-                                        .foregroundStyle(.white)
-                                    
-                                    Text(userManager.currentLevelTitle.uppercased())
-                                        .appFont(10, weight: .black)
-                                        .foregroundStyle(.cyan)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.cyan.opacity(0.1))
-                                        .clipShape(Capsule())
-                                    
-                                    Button(action: { showEditProfile = true }) {
-                                        HStack(spacing: 4) {
-                                            Text("Edit Profile")
-                                            Image(systemName: "pencil")
-                                                .font(.caption)
-                                        }
-                                        .appFont(12, weight: .semibold)
-                                        .foregroundStyle(.white.opacity(0.6))
-                                        .padding(.top, 2)
-                                    }
-                                }
-                                Spacer()
-                            }
-                            .padding(20) // ✨ Reduced padding
-                            .background(.ultraThinMaterial)
-                            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 28).stroke(Color.white.opacity(0.15), lineWidth: 1))
-                            .padding(.horizontal, 16)
+                            // --- LEVEL & XP CARD ---
+                            LevelProgressCard(
+                                level: userManager.currentLevel,
+                                xp: userManager.currentUser?.xp ?? 0,
+                                progress: userManager.levelProgress
+                            )
                             
                             // --- STATS ROW ---
-                            HStack(spacing: 12) {
-                                // ✨ FIX: Changed carbonSaved to carbonSavedFormatted
-                                GlassStat(icon: "leaf.fill", value: userManager.carbonSavedFormatted, label: "Impact", color: .green)
-                                GlassStat(icon: "star.fill", value: userManager.userRating == 0 ? "-" : String(format: "%.1f", userManager.userRating), label: "Rating", color: .yellow)
-                                GlassStat(icon: "arrow.triangle.2.circlepath", value: "\(userManager.completedTradeCount)", label: "Trades", color: .cyan)
-                            }
-                            .padding(.horizontal, 16)
+                            StatsRow(
+                                trustScore: userManager.trustScore,
+                                tradeCount: userManager.completedTradeCount,
+                                streak: userManager.currentStreak
+                            )
                             
-                            // --- ACTIVITY HUB BANNER (Compact) ---
-                            Button(action: { showActivityHub = true }) {
-                                HStack(spacing: 12) {
-                                    ZStack {
-                                        Circle()
-                                            .fill(LinearGradient(colors: [.orange, .yellow], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                            .frame(width: 36, height: 36) // ✨ Reduced from 44
-                                        
-                                        Image(systemName: "sparkles")
-                                            .font(.system(size: 16, weight: .semibold))
-                                            .foregroundColor(.white)
-                                    }
-                                    
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Activity Hub")
-                                            .appFont(14, weight: .bold)
-                                            .foregroundColor(.white)
-                                        
-                                        Text("See who liked your items")
-                                            .appFont(12)
-                                            .foregroundColor(.white.opacity(0.7))
-                                    }
-                                    Spacer()
-                                    
-                                    // Notification Badge (Mock logic, can be connected to NotificationManager)
-                                    // Circle().fill(.red).frame(width: 8, height: 8)
-                                    
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption.bold())
-                                        .foregroundColor(.white.opacity(0.3))
-                                }
-                                .padding(12) // ✨ Compact padding
-                                .background(.ultraThinMaterial)
-                                .clipShape(RoundedRectangle(cornerRadius: 20))
-                                .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.1), lineWidth: 1))
-                            }
-                            .padding(.horizontal, 16)
+                            // --- ACTION BUTTONS (Updated to use ModalManager) ---
+                            ActionButtonsRow(
+                                onEdit: { modalManager.show(.editProfile) },
+                                onActivity: { modalManager.show(.activityHub) },
+                                onSettings: { modalManager.show(.settings) }
+                            )
                             
                             // --- INVENTORY GRID ---
-                            HStack(alignment: .bottom) {
-                                Text("Inventory")
-                                    .appFont(18, weight: .bold)
+                            HStack {
+                                Text("My Listings")
+                                    .font(.title3.bold())
                                     .foregroundStyle(.white)
                                 
-                                Text("(\(userManager.userItems.count)/20)")
-                                    .appFont(14)
-                                    .foregroundStyle(.white.opacity(0.5))
-                                    .padding(.bottom, 2)
-                                
                                 Spacer()
+                                
+                                Text("\(userManager.userItems.count) items")
+                                    .font(.caption)
+                                    .foregroundStyle(.white.opacity(0.6))
                             }
-                            .padding(.horizontal, 24)
-                            .padding(.top, 8)
+                            .padding(.horizontal, 4)
                             
                             if userManager.userItems.isEmpty {
-                                EmptyInventoryState { showAddItemSheet = true }
-                                    .padding(.top, 20)
-                            } else {
-                                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                                    // Add Item Card
-                                    if userManager.canAddItem {
-                                        Button(action: { showAddItemSheet = true }) {
-                                            ZStack {
-                                                RoundedRectangle(cornerRadius: 24)
-                                                    .fill(Color.white.opacity(0.03))
-                                                    .overlay(
-                                                        RoundedRectangle(cornerRadius: 24)
-                                                            .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [8]))
-                                                            .foregroundStyle(.cyan.opacity(0.4))
-                                                    )
-                                                
-                                                VStack(spacing: 8) {
-                                                    Image(systemName: "plus")
-                                                        .font(.system(size: 24, weight: .light))
-                                                        .foregroundStyle(.cyan)
-                                                    Text("Add Item")
-                                                        .appFont(12, weight: .bold)
-                                                        .foregroundStyle(.cyan)
-                                                }
-                                            }
-                                            .frame(height: 200)
-                                        }
-                                    }
-                                    
-                                    // Items
-                                    ForEach(userManager.userItems) { item in
-                                        NavigationLink(destination: EditItemView(item: item)) {
-                                            InventoryItemCard(item: item)
-                                                .frame(height: 200)
-                                        }
-                                        .buttonStyle(.plain) // Prevent blue flash on tap
-                                    }
+                                EmptyInventoryState {
+                                    // ✨ Trigger Glass Modal
+                                    modalManager.show(.addItem)
                                 }
-                                .padding(.horizontal, 20)
-                                .padding(.bottom, 120)
+                            } else {
+                                InventoryGrid(items: userManager.userItems) { item in
+                                    selectedItem = item
+                                }
                             }
+                            
+                            // Bottom padding for TabBar and FAB
+                            Color.clear.frame(height: 100)
                         }
+                        .padding(.horizontal, 20)
                     }
                     .refreshable {
-                        // ✨ Native Pull-to-Refresh
                         await userManager.loadUserData()
+                    }
+                }
+                
+                // 3. Floating Action Button (Accessible One-Handed)
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            Haptics.shared.playMedium()
+                            // ✨ Trigger Glass Modal
+                            modalManager.show(.addItem)
+                        }) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 24, weight: .bold))
+                                .foregroundStyle(.black)
+                                .frame(width: 60, height: 60)
+                                .background(Color.cyan.gradient)
+                                .clipShape(Circle())
+                                .shadow(color: .cyan.opacity(0.5), radius: 10, y: 5)
+                                .overlay(
+                                    Circle()
+                                        .stroke(.white.opacity(0.5), lineWidth: 1)
+                                )
+                        }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 110) // Clear TabBar
                     }
                 }
             }
             .navigationBarHidden(true)
-            .onAppear {
-                withAnimation(.easeOut(duration: 0.8)) { appearAnimation = true }
-                // Optional: Check if we need to reload logic here
+            // Note: Global modals (AddItem, Settings, etc.) are now handled in ContentView.
+            // Only local data-dependent sheets remain here.
+            .sheet(item: $selectedItem) { item in
+                EditItemView(item: item)
+                    .presentationDetents([.large])
             }
-            .fullScreenCover(isPresented: $showAddItemSheet) { AddItemView(isPresented: $showAddItemSheet) }
-            .sheet(isPresented: $showSettings) { SettingsView() }
-            .sheet(isPresented: $showEditProfile) { EditProfileView() }
-            .navigationDestination(isPresented: $showActivityHub) { ActivityHubView() }
+        }
+        .onAppear {
+            withAnimation(.spring(duration: 0.8)) {
+                appearAnimation = true
+            }
+            // Optimization: Rely on UserManager's initial load or refreshable
         }
     }
 }
 
-struct GlassStat: View {
-    let icon: String
-    let value: String
-    let label: String
-    var color: Color
+// MARK: - Subcomponents
+
+struct ProfileHeader: View {
+    let user: UserProfile?
     
     var body: some View {
-        VStack(spacing: 4) {
+        HStack(spacing: 16) {
+            // Avatar with Border
+            ZStack {
+                Circle()
+                    .strokeBorder(LinearGradient(colors: [.cyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 3)
+                    .frame(width: 88, height: 88)
+                
+                AsyncImageView(filename: user?.avatarUrl)
+                    .scaledToFill()
+                    .frame(width: 80, height: 80)
+                    .clipShape(Circle())
+            }
+            
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(user?.username ?? "Trader")
+                        .font(.title2.bold())
+                        .foregroundStyle(.white)
+                    
+                    if user?.isVerified == true {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundStyle(.cyan)
+                            .font(.subheadline)
+                    }
+                }
+                
+                Text(user?.bio.isEmpty == false ? user!.bio : "Ready to trade on Swappr!")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(2)
+                
+                HStack(spacing: 4) {
+                    Image(systemName: "mappin.and.ellipse")
+                    Text(user?.location ?? "Unknown Location")
+                }
+                .font(.caption)
+                .foregroundStyle(.gray)
+            }
+            
+            Spacer()
+        }
+    }
+}
+
+struct LevelProgressCard: View {
+    let level: UserLevel
+    let xp: Int
+    let progress: Double // 0.0 to 1.0
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // Level Icon
+            ZStack {
+                Circle()
+                    .fill(level.color.opacity(0.2))
+                    .frame(width: 50, height: 50)
+                
+                Image(systemName: level.icon)
+                    .font(.system(size: 24))
+                    .foregroundStyle(level.color)
+            }
+            
+            // Progress Info
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(level.title)
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    
+                    Spacer()
+                    
+                    Text("\(xp) XP")
+                        .font(.caption.bold())
+                        .foregroundStyle(level.color)
+                }
+                
+                // Progress Bar
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.white.opacity(0.1))
+                        
+                        Capsule()
+                            .fill(LinearGradient(colors: [level.color, level.color.opacity(0.6)], startPoint: .leading, endPoint: .trailing))
+                            .frame(width: max(0, geo.size.width * progress))
+                            .animation(.spring(response: 0.6), value: progress)
+                    }
+                }
+                .frame(height: 8)
+                
+                Text("Level \(level.tier)")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+        }
+        .padding(16)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
+    }
+}
+
+struct StatsRow: View {
+    let trustScore: Int
+    let tradeCount: Int
+    let streak: Int
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            StatCard(label: "Trust Score", value: "\(trustScore)", icon: "shield.fill", color: .green)
+            StatCard(label: "Trades", value: "\(tradeCount)", icon: "arrow.triangle.2.circlepath", color: .cyan)
+            StatCard(label: "Day Streak", value: "\(streak)", icon: "flame.fill", color: .orange)
+        }
+    }
+}
+
+struct StatCard: View {
+    let label: String
+    let value: String
+    let icon: String
+    let color: Color
+    
+    var body: some View {
+        VStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 16))
+                .font(.system(size: 18))
                 .foregroundStyle(color.gradient)
-                .padding(.bottom, 2)
             
             Text(value)
-                .appFont(16, weight: .bold)
+                .font(.system(size: 18, weight: .bold))
                 .foregroundStyle(.white)
             
             Text(label.uppercased())
-                .appFont(9, weight: .bold)
+                .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.white.opacity(0.5))
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 14)
+        .padding(.vertical, 16)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 20))
-        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.1), lineWidth: 1))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
+    }
+}
+
+struct ActionButtonsRow: View {
+    var onEdit: () -> Void
+    var onActivity: () -> Void
+    var onSettings: () -> Void
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            GlassButton(icon: "pencil", label: "Edit Profile", action: onEdit)
+            GlassButton(icon: "bell.badge", label: "Activity", action: onActivity)
+            GlassButton(icon: "gearshape", label: "Settings", action: onSettings)
+        }
+    }
+}
+
+struct GlassButton: View {
+    let icon: String
+    let label: String
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: {
+            Haptics.shared.playLight()
+            action()
+        }) {
+            VStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white)
+                
+                Text(label)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.white)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(Color.white.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+            )
+        }
+    }
+}
+
+struct InventoryGrid: View {
+    let items: [TradeItem]
+    let onSelect: (TradeItem) -> Void
+    
+    let columns = [
+        GridItem(.flexible(), spacing: 16),
+        GridItem(.flexible(), spacing: 16)
+    ]
+    
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 16) {
+            ForEach(items) { item in
+                InventoryItemCard(item: item)
+                    .onTapGesture {
+                        Haptics.shared.playLight()
+                        onSelect(item)
+                    }
+            }
+        }
+        .padding(.bottom, 20)
     }
 }
 
 struct EmptyInventoryState: View {
     var onAdd: () -> Void
+    
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 20) {
             ZStack {
-                Circle().fill(Color.white.opacity(0.05)).frame(width: 100, height: 100)
+                Circle().fill(Color.white.opacity(0.05))
+                    .frame(width: 120, height: 120)
+                
                 Image(systemName: "cube.transparent")
-                    .font(.system(size: 44))
+                    .font(.system(size: 50))
                     .foregroundStyle(.white.opacity(0.3))
             }
+            .padding(.top, 40)
+            
+            Text("Your inventory is empty")
+                .font(.headline)
+                .foregroundStyle(.white.opacity(0.8))
+            
+            Text("Add items to start trading and earning XP!")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.5))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            
+            Button(action: onAdd) {
+                Text("List Your First Item")
+                    .fontWeight(.bold)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .background(Color.cyan)
+                    .foregroundStyle(.black)
+                    .clipShape(Capsule())
+            }
             .padding(.top, 10)
-            
-            Text("Your inventory is empty.")
-                .appFont(16, weight: .medium)
-                .foregroundStyle(.white.opacity(0.6))
-            
-            Button("List Your First Item", action: onAdd)
-                .buttonStyle(PrimaryButtonStyle())
-                .frame(width: 220)
         }
-        .frame(minHeight: 250)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24)
+                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+        )
     }
 }

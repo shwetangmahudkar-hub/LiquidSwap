@@ -10,40 +10,36 @@ struct SettingsView: View {
     // UI State
     @State private var showDeleteAlert = false
     @State private var showSignOutAlert = false
+    @State private var showClearCacheAlert = false // New Alert State
     @State private var isProcessing = false
+    @State private var cacheCleared = false
+    
     @AppStorage("isDarkMode") private var isDarkMode = true
     
     var body: some View {
         ZStack {
-            // 1. Global Background
+            // 1. Global Background (DeepGlass)
             LiquidBackground()
             
             VStack(spacing: 0) {
-                // 2. Custom Header
+                // 2. Header (Clean - No Close Button per rules)
                 HStack {
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .background(Color.white.opacity(0.1))
-                            .clipShape(Circle())
-                    }
-                    
-                    Spacer()
-                    
                     Text("Settings")
-                        .font(.headline.bold())
+                        .font(.largeTitle.bold())
                         .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.2), radius: 10, x: 0, y: 5)
                     
                     Spacer()
                     
-                    // Balance Spacer
-                    Color.clear.frame(width: 44, height: 44)
+                    // Optional: Indicator that this is a "modal" feel
+                    Capsule()
+                        .fill(Color.white.opacity(0.2))
+                        .frame(width: 40, height: 4)
+                        .padding(.trailing, 20) // Visual balance
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 10)
-                .padding(.bottom, 20)
+                .padding(.horizontal, 24)
+                .padding(.top, 30)
+                .padding(.bottom, 10)
                 
                 // 3. Settings Content
                 ScrollView {
@@ -73,6 +69,10 @@ struct SettingsView: View {
                             .padding(20)
                             .background(.ultraThinMaterial)
                             .clipShape(RoundedRectangle(cornerRadius: 24))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 24)
+                                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                            )
                         }
                         
                         // Preferences Section
@@ -82,7 +82,7 @@ struct SettingsView: View {
                             SettingsToggleRow(icon: "moon.fill", title: "Dark Mode", isOn: $isDarkMode)
                             
                             SettingsLinkRow(icon: "bell.fill", title: "Notifications") {
-                                // Open Notification Settings logic or Sheet
+                                // Open Notification Settings logic
                             }
                             
                             SettingsLinkRow(icon: "lock.shield.fill", title: "Privacy & Security") {
@@ -93,17 +93,44 @@ struct SettingsView: View {
                         .background(.ultraThinMaterial)
                         .clipShape(RoundedRectangle(cornerRadius: 24))
                         
+                        // Storage & Data (NEW SECTION)
+                        VStack(spacing: 16) {
+                            SectionHeader(title: "STORAGE & DATA")
+                            
+                            Button(action: { showClearCacheAlert = true }) {
+                                HStack(spacing: 16) {
+                                    Image(systemName: cacheCleared ? "checkmark.circle.fill" : "trash.fill")
+                                        .font(.system(size: 18))
+                                        .foregroundStyle(cacheCleared ? .green : .orange)
+                                        .frame(width: 24)
+                                    
+                                    Text(cacheCleared ? "Cache Cleared" : "Clear Image Cache")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.white)
+                                    
+                                    Spacer()
+                                    
+                                    if !cacheCleared {
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption)
+                                            .foregroundStyle(.white.opacity(0.3))
+                                    }
+                                }
+                                .padding(.vertical, 8)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(20)
+                        .background(.ultraThinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 24))
+                        
                         // Support Section
                         VStack(spacing: 16) {
                             SectionHeader(title: "SUPPORT")
                             
-                            SettingsLinkRow(icon: "questionmark.circle.fill", title: "Help Center") {
-                                // Action
-                            }
-                            
-                            SettingsLinkRow(icon: "doc.text.fill", title: "Terms of Service") {
-                                // Action
-                            }
+                            SettingsLinkRow(icon: "questionmark.circle.fill", title: "Help Center") { }
+                            SettingsLinkRow(icon: "doc.text.fill", title: "Terms of Service") { }
                             
                             HStack {
                                 Spacer()
@@ -135,13 +162,14 @@ struct SettingsView: View {
                 }
             }
             
-            // 4. Floating Sign Out Button
+            // 4. Floating Sign Out Button (Bottom)
             VStack {
                 Spacer()
                 Button(action: { showSignOutAlert = true }) {
                     ZStack {
                         Capsule()
-                            .fill(Color.white.opacity(0.1))
+                            .fill(Color.black.opacity(0.4)) // Darker for contrast
+                            .background(.ultraThinMaterial)
                             .frame(height: 56)
                             .overlay(
                                 Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1)
@@ -166,6 +194,7 @@ struct SettingsView: View {
             }
         }
         .navigationBarHidden(true)
+        // ALERTS
         .alert("Sign Out", isPresented: $showSignOutAlert) {
             Button("Cancel", role: .cancel) { }
             Button("Sign Out", role: .destructive) { performSignOut() }
@@ -178,6 +207,13 @@ struct SettingsView: View {
         } message: {
             Text("This action will permanently delete your data and inventory. It cannot be undone.")
         }
+        // NEW: Clear Cache Alert
+        .alert("Clear Cache", isPresented: $showClearCacheAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Clear", role: .destructive) { performClearCache() }
+        } message: {
+            Text("This will free up space by deleting temporary images. They will be re-downloaded when needed.")
+        }
     }
     
     // MARK: - Actions
@@ -186,22 +222,31 @@ struct SettingsView: View {
         isProcessing = true
         Task {
             try? await SupabaseConfig.client.auth.signOut()
-            // The Auth listener in ContentView/UserManager will handle the state change
-            await MainActor.run {
-                isProcessing = false
-            }
+            await MainActor.run { isProcessing = false }
         }
     }
     
     func performDeleteAccount() {
         isProcessing = true
         Task {
-            // Logic to delete user data from DB would go here
-            // Then sign out
             try? await SupabaseConfig.client.auth.signOut()
-            await MainActor.run {
-                isProcessing = false
-            }
+            await MainActor.run { isProcessing = false }
+        }
+    }
+    
+    func performClearCache() {
+        // ✨ Action: Clear Disk
+        DiskManager.clearCache()
+        
+        // Feedback
+        Haptics.shared.playSuccess()
+        withAnimation {
+            cacheCleared = true
+        }
+        
+        // Reset flag after 2 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation { cacheCleared = false }
         }
     }
     
