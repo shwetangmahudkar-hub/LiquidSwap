@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct TradesView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var tradeManager = TradeManager.shared
     @ObservedObject var userManager = UserManager.shared
     
@@ -15,10 +16,7 @@ struct TradesView: View {
     // Sheet State
     @State private var selectedItemForOffer: TradeItem?
     @State private var selectedItemForDetail: TradeItem?
-    
-    // 🛠️ FIX: Use a wrapper for the UUID to satisfy 'Identifiable'
     @State private var selectedProfileSheet: TradeProfileSheetWrapper?
-    
     @State private var selectedOfferForCounter: TradeOffer?
     
     // Navigation State (For Auto-Redirect)
@@ -31,6 +29,15 @@ struct TradesView: View {
     // Cancel Offer Confirmation
     @State private var offerToCancel: TradeOffer?
     @State private var showCancelConfirmation = false
+    
+    // MARK: - Adaptive Colors
+    private var primaryText: Color {
+        colorScheme == .dark ? .white : .black
+    }
+    
+    private var secondaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.5) : .black.opacity(0.5)
+    }
     
     // Computed Property for Sent Offers
     var sentOffers: [TradeOffer] {
@@ -56,9 +63,9 @@ struct TradesView: View {
                         
                         // 3. Main Content
                         ScrollView {
-                            VStack(spacing: 20) {
+                            VStack(spacing: 16) {
                                 // List Content based on Filter
-                                LazyVStack(spacing: 16) {
+                                LazyVStack(spacing: 12) {
                                     switch selectedFilter {
                                     case .incoming:
                                         incomingOffersList
@@ -68,9 +75,9 @@ struct TradesView: View {
                                         interestedItemsList
                                     }
                                 }
-                                .padding(.bottom, 100)
+                                .padding(.bottom, 90)
                             }
-                            .padding(.horizontal)
+                            .padding(.horizontal, 12)
                         }
                         .refreshable {
                             await tradeManager.loadTradesData()
@@ -98,7 +105,7 @@ struct TradesView: View {
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
                 }
-                // 🛠️ FIX: Profile Sheet using Wrapper
+                // Profile Sheet using Wrapper
                 .sheet(item: $selectedProfileSheet) { wrapper in
                     NavigationStack {
                         PublicProfileView(userId: wrapper.id)
@@ -135,7 +142,6 @@ struct TradesView: View {
                     Text("This will remove the offer permanently.")
                 }
             } else {
-                // Fallback on earlier versions if needed
                 EmptyView()
             }
         }
@@ -146,21 +152,20 @@ struct TradesView: View {
     private var headerView: some View {
         HStack {
             Text("Trades")
-                .appFont(34, weight: .bold)
-                .foregroundColor(.white)
+                .appFont(28, weight: .bold)
+                .foregroundColor(primaryText)
             Spacer()
-            // Loading Indicator
             if tradeManager.isLoading {
-                ProgressView().tint(.white)
+                ProgressView().tint(primaryText)
             }
         }
-        .padding(.horizontal)
-        .padding(.top, 60)
-        .padding(.bottom, 20)
+        .padding(.horizontal, 12)
+        .padding(.top, 56)
+        .padding(.bottom, 14)
     }
     
     private var filterTabs: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             ForEach(TradeFilter.allCases, id: \.self) { filter in
                 Button(action: {
                     Haptics.shared.playLight()
@@ -168,15 +173,14 @@ struct TradesView: View {
                         selectedFilter = filter
                     }
                 }) {
-                    HStack(spacing: 6) {
-                        // Dynamic Icons
+                    HStack(spacing: 5) {
                         Image(systemName: iconForFilter(filter))
-                            .font(.system(size: 12))
+                            .font(.system(size: 11))
                         Text(filter.rawValue)
-                            .appFont(14, weight: .bold)
+                            .appFont(13, weight: .bold)
                     }
-                    .foregroundColor(selectedFilter == filter ? .black : .white)
-                    .padding(.vertical, 12)
+                    .foregroundColor(selectedFilter == filter ? .black : primaryText)
+                    .padding(.vertical, 10)
                     .frame(maxWidth: .infinity)
                     .background(
                         Group {
@@ -194,8 +198,8 @@ struct TradesView: View {
                 }
             }
         }
-        .padding(.horizontal)
-        .padding(.bottom, 16)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
     }
     
     private func iconForFilter(_ filter: TradeFilter) -> String {
@@ -221,7 +225,6 @@ struct TradesView: View {
                     OfferCard(
                         offer: offer,
                         onViewProfile: {
-                            // 🛠️ FIX: Use wrapper
                             selectedProfileSheet = TradeProfileSheetWrapper(id: offer.senderId)
                         },
                         onCounter: { selectedOfferForCounter = offer }
@@ -238,7 +241,6 @@ struct TradesView: View {
                             Label("Counter Offer", systemImage: "arrow.triangle.2.circlepath")
                         }
                         Button {
-                            // 🛠️ FIX: Use wrapper
                             selectedProfileSheet = TradeProfileSheetWrapper(id: offer.senderId)
                         } label: {
                             Label("View Sender Profile", systemImage: "person.circle")
@@ -286,7 +288,6 @@ struct TradesView: View {
                         onTap: { selectedItemForOffer = item },
                         onViewDetail: { selectedItemForDetail = item },
                         onViewProfile: {
-                            // 🛠️ FIX: Use wrapper
                             selectedProfileSheet = TradeProfileSheetWrapper(id: item.ownerId)
                         },
                         onDelete: {
@@ -308,11 +309,10 @@ struct TradesView: View {
             if accept && success {
                 Haptics.shared.playSuccess()
                 
-                // Auto-Redirect Logic
                 var acceptedTrade = offer
                 acceptedTrade.status = "accepted"
                 
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+                try? await Task.sleep(nanoseconds: 500_000_000)
                 
                 await MainActor.run {
                     navigateToChatTrade = acceptedTrade
@@ -342,141 +342,165 @@ struct TradesView: View {
 // MARK: - Components
 
 struct GlassEmptyState: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
     let icon: String
     let message: String
     let subtitle: String
     
+    private var primaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.6) : .black.opacity(0.6)
+    }
+    
+    private var secondaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.4) : .black.opacity(0.4)
+    }
+    
+    private var iconBackground: Color {
+        colorScheme == .dark ? .white.opacity(0.05) : .black.opacity(0.05)
+    }
+    
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             ZStack {
                 Circle()
-                    .fill(Color.white.opacity(0.05))
-                    .frame(width: 80, height: 80)
+                    .fill(iconBackground)
+                    .frame(width: 70, height: 70)
                 
                 Image(systemName: icon)
-                    .font(.system(size: 32))
-                    .foregroundStyle(.white.opacity(0.3))
+                    .font(.system(size: 28))
+                    .foregroundStyle(secondaryText)
             }
             
-            VStack(spacing: 6) {
+            VStack(spacing: 4) {
                 Text(message)
-                    .appFont(18, weight: .bold)
-                    .foregroundStyle(.white.opacity(0.6))
+                    .appFont(16, weight: .bold)
+                    .foregroundStyle(primaryText)
                 
                 Text(subtitle)
-                    .appFont(14)
-                    .foregroundStyle(.white.opacity(0.4))
+                    .appFont(13)
+                    .foregroundStyle(secondaryText)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 20)
+                    .padding(.horizontal, 16)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
+        .padding(.vertical, 32)
         .background(.ultraThinMaterial)
-        .cornerRadius(24)
+        .cornerRadius(20)
         .overlay(
-            RoundedRectangle(cornerRadius: 24)
+            RoundedRectangle(cornerRadius: 20)
                 .stroke(Color.white.opacity(0.1), lineWidth: 1)
         )
     }
 }
 
 struct OfferCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
     let offer: TradeOffer
     let onViewProfile: () -> Void
     let onCounter: () -> Void
     
     @State private var isProcessing = false
     
+    private var primaryText: Color {
+        colorScheme == .dark ? .white : .black
+    }
+    
+    private var secondaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.5) : .black.opacity(0.5)
+    }
+    
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             // Header
             HStack {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Circle()
                         .fill(Color.cyan.opacity(0.2))
-                        .frame(width: 32, height: 32)
-                        .overlay(Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 14, weight: .bold)).foregroundStyle(.cyan))
+                        .frame(width: 28, height: 28)
+                        .overlay(Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 12, weight: .bold)).foregroundStyle(.cyan))
                     Text("Trade Offer")
-                        .appFont(14, weight: .bold)
-                        .foregroundStyle(.white)
+                        .appFont(13, weight: .bold)
+                        .foregroundStyle(primaryText)
                 }
                 Spacer()
                 Text(timeAgoString(from: offer.createdAt))
-                    .appFont(11)
-                    .foregroundStyle(.white.opacity(0.5))
+                    .appFont(10)
+                    .foregroundStyle(secondaryText)
             }
             
             // Items
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 itemVisual(item: offer.offeredItem, label: "THEY OFFER", borderColor: .cyan)
                 VStack(spacing: 4) {
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(secondaryText)
                 }
                 itemVisual(item: offer.wantedItem, label: "FOR YOUR", borderColor: .purple)
             }
             
             // Sender
             Button(action: onViewProfile) {
-                HStack(spacing: 8) {
-                    Image(systemName: "person.circle.fill").font(.system(size: 14)).foregroundStyle(.cyan)
-                    Text("View Sender Profile").appFont(12, weight: .medium).foregroundStyle(.cyan)
+                HStack(spacing: 6) {
+                    Image(systemName: "person.circle.fill").font(.system(size: 12)).foregroundStyle(.cyan)
+                    Text("View Sender Profile").appFont(11, weight: .medium).foregroundStyle(.cyan)
                     Spacer()
-                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(.cyan.opacity(0.6))
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(.cyan.opacity(0.6))
                 }
-                .padding(.horizontal, 12).padding(.vertical, 10)
-                .background(Color.cyan.opacity(0.1)).cornerRadius(12)
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .background(Color.cyan.opacity(0.1)).cornerRadius(10)
             }
             
             // Actions
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Button(action: { handleResponse(accept: false) }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "xmark").font(.system(size: 14, weight: .bold))
-                        Text("Decline").appFont(14, weight: .bold)
+                    HStack(spacing: 5) {
+                        Image(systemName: "xmark").font(.system(size: 12, weight: .bold))
+                        Text("Decline").appFont(13, weight: .bold)
                     }
-                    .foregroundStyle(.red).frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(Color.red.opacity(0.15)).cornerRadius(14)
+                    .foregroundStyle(.red).frame(maxWidth: .infinity).padding(.vertical, 12)
+                    .background(Color.red.opacity(0.15)).cornerRadius(12)
                 }
                 .disabled(isProcessing)
                 
                 Button(action: onCounter) {
-                    Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white).frame(width: 50).padding(.vertical, 14)
-                        .background(.ultraThinMaterial).cornerRadius(14)
-                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.2), lineWidth: 1))
+                    Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(primaryText).frame(width: 44).padding(.vertical, 12)
+                        .background(.ultraThinMaterial).cornerRadius(12)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.2), lineWidth: 1))
                 }
                 .disabled(isProcessing)
                 
                 Button(action: { handleResponse(accept: true) }) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         if isProcessing { ProgressView().tint(.black) } else {
-                            Image(systemName: "checkmark").font(.system(size: 14, weight: .bold))
-                            Text("Accept").appFont(14, weight: .bold)
+                            Image(systemName: "checkmark").font(.system(size: 12, weight: .bold))
+                            Text("Accept").appFont(13, weight: .bold)
                         }
                     }
-                    .foregroundStyle(.black).frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(Color.cyan).cornerRadius(14)
+                    .foregroundStyle(.black).frame(maxWidth: .infinity).padding(.vertical, 12)
+                    .background(Color.cyan).cornerRadius(12)
                 }
                 .disabled(isProcessing)
             }
         }
-        .padding(20)
+        .padding(16)
         .background(.ultraThinMaterial)
-        .cornerRadius(24)
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.1), lineWidth: 1))
-        .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
+        .cornerRadius(20)
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.1), lineWidth: 1))
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
     }
     
     func itemVisual(item: TradeItem?, label: String, borderColor: Color) -> some View {
-        VStack(spacing: 8) {
-            Text(label).appFont(9, weight: .black).foregroundStyle(borderColor.opacity(0.8))
+        VStack(spacing: 6) {
+            Text(label).appFont(8, weight: .black).foregroundStyle(borderColor.opacity(0.8))
             AsyncImageView(filename: item?.imageUrl)
-                .frame(width: 70, height: 70).cornerRadius(16)
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(borderColor.opacity(0.4), lineWidth: 2))
-            Text(item?.title ?? "Unknown").appFont(12, weight: .bold).lineLimit(1).foregroundStyle(.white)
+                .frame(width: 60, height: 60).cornerRadius(14)
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(borderColor.opacity(0.4), lineWidth: 2))
+            Text(item?.title ?? "Unknown").appFont(11, weight: .bold).lineLimit(1).foregroundStyle(primaryText)
         }
         .frame(maxWidth: .infinity)
     }
@@ -500,37 +524,43 @@ struct OfferCard: View {
 }
 
 struct SentOfferCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
     let offer: TradeOffer
     let onCancel: () -> Void
     
+    private var primaryText: Color {
+        colorScheme == .dark ? .white : .black
+    }
+    
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 12) {
             // Header
             HStack {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Circle()
                         .fill(Color.orange.opacity(0.2))
-                        .frame(width: 32, height: 32)
-                        .overlay(Image(systemName: "paperplane.fill").font(.system(size: 14)).foregroundStyle(.orange))
+                        .frame(width: 28, height: 28)
+                        .overlay(Image(systemName: "paperplane.fill").font(.system(size: 12)).foregroundStyle(.orange))
                     Text("Offer Sent")
-                        .appFont(14, weight: .bold)
-                        .foregroundStyle(.white)
+                        .appFont(13, weight: .bold)
+                        .foregroundStyle(primaryText)
                 }
                 Spacer()
                 Text("Pending")
-                    .font(.caption.bold())
+                    .font(.caption2.bold())
                     .foregroundStyle(.orange)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
                     .background(Color.orange.opacity(0.1)).clipShape(Capsule())
             }
             
             // Items
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 itemVisual(item: offer.offeredItem, label: "YOU OFFERED", borderColor: .orange)
                 VStack(spacing: 4) {
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(colorScheme == .dark ? .white.opacity(0.4) : .black.opacity(0.4))
                 }
                 itemVisual(item: offer.wantedItem, label: "FOR THEIR", borderColor: .gray)
             }
@@ -542,67 +572,81 @@ struct SentOfferCard: View {
                     Image(systemName: "trash")
                     Text("Cancel Offer")
                 }
-                .font(.system(size: 14, weight: .bold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(.red.opacity(0.8))
-                .padding(.vertical, 8)
+                .padding(.vertical, 6)
                 .frame(maxWidth: .infinity)
             }
         }
-        .padding(20)
+        .padding(16)
         .background(.ultraThinMaterial)
-        .cornerRadius(24)
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.1), lineWidth: 1))
+        .cornerRadius(20)
+        .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.1), lineWidth: 1))
     }
     
     func itemVisual(item: TradeItem?, label: String, borderColor: Color) -> some View {
-        VStack(spacing: 8) {
-            Text(label).appFont(9, weight: .black).foregroundStyle(borderColor.opacity(0.8))
+        VStack(spacing: 6) {
+            Text(label).appFont(8, weight: .black).foregroundStyle(borderColor.opacity(0.8))
             AsyncImageView(filename: item?.imageUrl)
-                .frame(width: 60, height: 60).cornerRadius(14)
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(borderColor.opacity(0.4), lineWidth: 2))
-            Text(item?.title ?? "Unknown").appFont(12, weight: .bold).lineLimit(1).foregroundStyle(.white)
+                .frame(width: 52, height: 52).cornerRadius(12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(borderColor.opacity(0.4), lineWidth: 2))
+            Text(item?.title ?? "Unknown").appFont(11, weight: .bold).lineLimit(1).foregroundStyle(primaryText)
         }
         .frame(maxWidth: .infinity)
     }
 }
 
 struct InterestedItemCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
     let item: TradeItem
     let onTap: () -> Void
     let onViewDetail: () -> Void
     let onViewProfile: () -> Void
     let onDelete: () -> Void
     
+    private var primaryText: Color {
+        colorScheme == .dark ? .white : .black
+    }
+    
+    private var secondaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.5) : .black.opacity(0.5)
+    }
+    
+    private var tertiaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.4) : .black.opacity(0.4)
+    }
+    
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 14) {
+            HStack(spacing: 12) {
                 AsyncImageView(filename: item.imageUrl)
-                    .frame(width: 70, height: 70).cornerRadius(16)
-                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.15), lineWidth: 1))
+                    .frame(width: 60, height: 60).cornerRadius(14)
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.15), lineWidth: 1))
                 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(item.title).appFont(16, weight: .bold).foregroundStyle(.white).lineLimit(1)
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title).appFont(15, weight: .bold).foregroundStyle(primaryText).lineLimit(1)
+                    HStack(spacing: 6) {
                         Text(item.category.uppercased())
-                            .appFont(9, weight: .bold).foregroundStyle(.cyan)
-                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .appFont(8, weight: .bold).foregroundStyle(.cyan)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(Color.cyan.opacity(0.15)).clipShape(Capsule())
                         if item.distance > 0 {
-                            HStack(spacing: 3) {
-                                Image(systemName: "location.fill").font(.system(size: 8))
-                                Text("\(String(format: "%.1f", item.distance)) km").appFont(10)
+                            HStack(spacing: 2) {
+                                Image(systemName: "location.fill").font(.system(size: 7))
+                                Text("\(String(format: "%.1f", item.distance)) km").appFont(9)
                             }
-                            .foregroundStyle(.white.opacity(0.5))
+                            .foregroundStyle(secondaryText)
                         }
                     }
-                    Text("Tap to make an offer").appFont(11).foregroundStyle(.white.opacity(0.4))
+                    Text("Tap to make an offer").appFont(10).foregroundStyle(tertiaryText)
                 }
                 Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 14, weight: .bold)).foregroundStyle(.cyan.opacity(0.6))
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(.cyan.opacity(0.6))
             }
-            .padding(14).background(.ultraThinMaterial).cornerRadius(20)
-            .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color.white.opacity(0.1), lineWidth: 1))
-            .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
+            .padding(12).background(.ultraThinMaterial).cornerRadius(16)
+            .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.1), lineWidth: 1))
+            .shadow(color: .black.opacity(0.1), radius: 6, y: 3)
         }
         .buttonStyle(.plain)
         .contextMenu {
@@ -615,7 +659,7 @@ struct InterestedItemCard: View {
     }
 }
 
-// 🛠️ FIX: Helper Struct for Identifiable UUID (prevents build error)
+// Helper Struct for Identifiable UUID
 struct TradeProfileSheetWrapper: Identifiable {
     let id: UUID
 }

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct InventoryView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var userManager = UserManager.shared
     
     // Sheet States
@@ -13,14 +14,16 @@ struct InventoryView: View {
     // Animation State
     @State private var appearAnimation = false
     
+    // Adaptive colors
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
-                // 1. Deep Space Background
-                Color.black.ignoresSafeArea()
+                // 1. Background
                 LiquidBackground()
-                    .opacity(0.6)
-                    .blur(radius: 20)
                     .ignoresSafeArea()
                 
                 // 2. Main Content
@@ -30,11 +33,11 @@ struct InventoryView: View {
                         .scaleEffect(1.5)
                 } else {
                     ScrollView(showsIndicators: false) {
-                        VStack(spacing: 20) {
+                        VStack(spacing: DS.Spacing.section) {
                             
                             // --- PROFILE HEADER ---
                             ProfileHeader(user: userManager.currentUser)
-                                .padding(.top, 10)
+                                .padding(.top, DS.Spacing.topInset)
                             
                             // --- LEVEL & XP CARD ---
                             LevelProgressCard(
@@ -60,16 +63,15 @@ struct InventoryView: View {
                             // --- INVENTORY GRID ---
                             HStack {
                                 Text("My Listings")
-                                    .font(.title3.bold())
-                                    .foregroundStyle(.white)
+                                    .appFont(DS.Font.sectionHeader, weight: .bold)
+                                    .foregroundStyle(colors.primaryText)
                                 
                                 Spacer()
                                 
                                 Text("\(userManager.userItems.count) items")
-                                    .font(.caption)
-                                    .foregroundStyle(.white.opacity(0.6))
+                                    .appFont(DS.Font.caption)
+                                    .foregroundStyle(colors.tertiaryText)
                             }
-                            .padding(.horizontal, 4)
                             
                             if userManager.userItems.isEmpty {
                                 EmptyInventoryState {
@@ -82,16 +84,16 @@ struct InventoryView: View {
                             }
                             
                             // Bottom padding for TabBar and FAB
-                            Color.clear.frame(height: 100)
+                            Color.clear.frame(height: DS.Spacing.bottomTab + 30)
                         }
-                        .padding(.horizontal, 20)
+                        .padding(.horizontal, DS.Spacing.edge)
                     }
                     .refreshable {
                         await userManager.loadUserData()
                     }
                 }
                 
-                // 3. Floating Action Button (Accessible One-Handed)
+                // 3. Floating Action Button
                 VStack {
                     Spacer()
                     HStack {
@@ -101,50 +103,56 @@ struct InventoryView: View {
                             showAddItemSheet = true
                         }) {
                             Image(systemName: "plus")
-                                .font(.system(size: 24, weight: .bold))
+                                .font(.system(size: 22, weight: .bold))
                                 .foregroundStyle(.black)
-                                .frame(width: 60, height: 60)
+                                .frame(width: 54, height: 54)
                                 .background(Color.cyan.gradient)
                                 .clipShape(Circle())
-                                .shadow(color: .cyan.opacity(0.5), radius: 10, y: 5)
-                                .overlay(
-                                    Circle()
-                                        .stroke(.white.opacity(0.5), lineWidth: 1)
-                                )
+                                .shadow(color: .cyan.opacity(0.5), radius: 8, y: 4)
+                                .overlay(Circle().stroke(.white.opacity(0.4), lineWidth: 1))
                         }
-                        .padding(.trailing, 20)
-                        .padding(.bottom, 110) // Clear TabBar
+                        .padding(.trailing, DS.Spacing.edge)
+                        .padding(.bottom, DS.Spacing.bottomTab + 20)
                     }
                 }
             }
             .navigationBarHidden(true)
+            // Full screen sheets that blend with Dynamic Island
             .sheet(isPresented: $showAddItemSheet) {
-                // ✅ FIX: Passed the required binding to AddItemView
                 AddItemView(isPresented: $showAddItemSheet)
                     .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(38)
             }
             .sheet(isPresented: $showEditProfile) {
                 EditProfileView()
-                    .presentationDetents([.medium, .large])
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(38)
             }
             .sheet(isPresented: $showActivityHub) {
                 ActivityHubView()
                     .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(38)
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
-                    .presentationDetents([.medium, .large])
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(38)
             }
             .sheet(item: $selectedItem) { item in
                 EditItemView(item: item)
                     .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(38)
             }
         }
         .onAppear {
             withAnimation(.spring(duration: 0.8)) {
                 appearAnimation = true
             }
-            // Ensure fresh data on appear
             Task { await userManager.loadUserData() }
         }
     }
@@ -153,46 +161,52 @@ struct InventoryView: View {
 // MARK: - Subcomponents
 
 struct ProfileHeader: View {
+    @Environment(\.colorScheme) private var colorScheme
     let user: UserProfile?
     
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+    
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             // Avatar with Border
             ZStack {
                 Circle()
-                    .strokeBorder(LinearGradient(colors: [.cyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 3)
-                    .frame(width: 88, height: 88)
+                    .strokeBorder(LinearGradient(colors: [.cyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 2.5)
+                    .frame(width: DS.Size.avatarLarge + 6, height: DS.Size.avatarLarge + 6)
                 
                 AsyncImageView(filename: user?.avatarUrl)
                     .scaledToFill()
-                    .frame(width: 80, height: 80)
+                    .frame(width: DS.Size.avatarLarge, height: DS.Size.avatarLarge)
                     .clipShape(Circle())
             }
             
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 5) {
                     Text(user?.username ?? "Trader")
-                        .font(.title2.bold())
-                        .foregroundStyle(.white)
+                        .appFont(DS.Font.screenTitle - 4, weight: .bold)
+                        .foregroundStyle(colors.primaryText)
                     
                     if user?.isVerified == true {
                         Image(systemName: "checkmark.seal.fill")
                             .foregroundStyle(.cyan)
-                            .font(.subheadline)
+                            .font(.caption)
                     }
                 }
                 
                 Text(user?.bio.isEmpty == false ? user!.bio : "Ready to trade on Swappr!")
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.7))
+                    .appFont(DS.Font.caption)
+                    .foregroundStyle(colors.secondaryText)
                     .lineLimit(2)
                 
-                HStack(spacing: 4) {
+                HStack(spacing: 3) {
                     Image(systemName: "mappin.and.ellipse")
+                        .font(.system(size: 9))
                     Text(user?.location ?? "Unknown Location")
+                        .appFont(DS.Font.small)
                 }
-                .font(.caption)
-                .foregroundStyle(.gray)
+                .foregroundStyle(colors.tertiaryText)
             }
             
             Spacer()
@@ -201,34 +215,39 @@ struct ProfileHeader: View {
 }
 
 struct LevelProgressCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let level: UserLevel
     let xp: Int
-    let progress: Double // 0.0 to 1.0
+    let progress: Double
+    
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
     
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             // Level Icon
             ZStack {
                 Circle()
                     .fill(level.color.opacity(0.2))
-                    .frame(width: 50, height: 50)
+                    .frame(width: 44, height: 44)
                 
                 Image(systemName: level.icon)
-                    .font(.system(size: 24))
+                    .font(.system(size: 20))
                     .foregroundStyle(level.color)
             }
             
             // Progress Info
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 5) {
                 HStack {
                     Text(level.title)
-                        .font(.headline)
-                        .foregroundStyle(.white)
+                        .appFont(DS.Font.cardTitle, weight: .semibold)
+                        .foregroundStyle(colors.primaryText)
                     
                     Spacer()
                     
                     Text("\(xp) XP")
-                        .font(.caption.bold())
+                        .appFont(DS.Font.small, weight: .bold)
                         .foregroundStyle(level.color)
                 }
                 
@@ -236,7 +255,7 @@ struct LevelProgressCard: View {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule()
-                            .fill(Color.white.opacity(0.1))
+                            .fill(colors.cardBackground)
                         
                         Capsule()
                             .fill(LinearGradient(colors: [level.color, level.color.opacity(0.6)], startPoint: .leading, endPoint: .trailing))
@@ -244,19 +263,19 @@ struct LevelProgressCard: View {
                             .animation(.spring(response: 0.6), value: progress)
                     }
                 }
-                .frame(height: 8)
+                .frame(height: 6)
                 
                 Text("Level \(level.tier)")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.5))
+                    .appFont(DS.Font.tiny)
+                    .foregroundStyle(colors.tertiaryText)
             }
         }
-        .padding(16)
+        .padding(DS.Spacing.cardPadding)
         .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.medium))
         .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.Radius.medium)
+                .stroke(colors.border, lineWidth: 1)
         )
     }
 }
@@ -267,41 +286,46 @@ struct StatsRow: View {
     let streak: Int
     
     var body: some View {
-        HStack(spacing: 12) {
-            StatCard(label: "Trust Score", value: "\(trustScore)", icon: "shield.fill", color: .green)
+        HStack(spacing: DS.Spacing.card) {
+            StatCard(label: "Trust", value: "\(trustScore)", icon: "shield.fill", color: .green)
             StatCard(label: "Trades", value: "\(tradeCount)", icon: "arrow.triangle.2.circlepath", color: .cyan)
-            StatCard(label: "Day Streak", value: "\(streak)", icon: "flame.fill", color: .orange)
+            StatCard(label: "Streak", value: "\(streak)", icon: "flame.fill", color: .orange)
         }
     }
 }
 
 struct StatCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     let label: String
     let value: String
     let icon: String
     let color: Color
     
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+    
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 18))
+                .font(.system(size: 16))
                 .foregroundStyle(color.gradient)
             
             Text(value)
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(.white)
+                .appFont(DS.Font.cardTitle, weight: .bold)
+                .foregroundStyle(colors.primaryText)
             
             Text(label.uppercased())
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white.opacity(0.5))
+                .appFont(DS.Font.tiny, weight: .bold)
+                .foregroundStyle(colors.tertiaryText)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
+        .padding(.vertical, 12)
         .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.medium))
         .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.Radius.medium)
+                .stroke(colors.border, lineWidth: 1)
         )
     }
 }
@@ -312,41 +336,45 @@ struct ActionButtonsRow: View {
     var onSettings: () -> Void
     
     var body: some View {
-        HStack(spacing: 12) {
-            GlassButton(icon: "pencil", label: "Edit Profile", action: onEdit)
-            GlassButton(icon: "bell.badge", label: "Activity", action: onActivity)
-            GlassButton(icon: "gearshape", label: "Settings", action: onSettings)
+        HStack(spacing: DS.Spacing.card) {
+            GlassActionButton(icon: "pencil", label: "Edit", action: onEdit)
+            GlassActionButton(icon: "bell.badge", label: "Activity", action: onActivity)
+            GlassActionButton(icon: "gearshape", label: "Settings", action: onSettings)
         }
     }
 }
 
-struct GlassButton: View {
+struct GlassActionButton: View {
+    @Environment(\.colorScheme) private var colorScheme
     let icon: String
     let label: String
     let action: () -> Void
+    
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
     
     var body: some View {
         Button(action: {
             Haptics.shared.playLight()
             action()
         }) {
-            VStack(spacing: 8) {
+            VStack(spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 16))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 14))
+                    .foregroundStyle(colors.primaryText)
                 
                 Text(label)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.white)
+                    .appFont(DS.Font.small, weight: .medium)
+                    .foregroundStyle(colors.secondaryText)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(Color.white.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .padding(.vertical, 12)
+            .background(colors.buttonBackground)
+            .clipShape(RoundedRectangle(cornerRadius: DS.Radius.small))
             .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                RoundedRectangle(cornerRadius: DS.Radius.small)
+                    .stroke(colors.border, lineWidth: 1)
             )
         }
     }
@@ -357,12 +385,12 @@ struct InventoryGrid: View {
     let onSelect: (TradeItem) -> Void
     
     let columns = [
-        GridItem(.flexible(), spacing: 16),
-        GridItem(.flexible(), spacing: 16)
+        GridItem(.flexible(), spacing: DS.Spacing.card),
+        GridItem(.flexible(), spacing: DS.Spacing.card)
     ]
     
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 16) {
+        LazyVGrid(columns: columns, spacing: DS.Spacing.card) {
             ForEach(items) { item in
                 InventoryItemCard(item: item)
                     .onTapGesture {
@@ -371,53 +399,57 @@ struct InventoryGrid: View {
                     }
             }
         }
-        .padding(.bottom, 20)
     }
 }
 
 struct EmptyInventoryState: View {
+    @Environment(\.colorScheme) private var colorScheme
     var onAdd: () -> Void
     
+    private var colors: AdaptiveColors {
+        AdaptiveColors(colorScheme: colorScheme)
+    }
+    
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 14) {
             ZStack {
-                Circle().fill(Color.white.opacity(0.05))
-                    .frame(width: 120, height: 120)
+                Circle().fill(colors.cardBackground)
+                    .frame(width: 100, height: 100)
                 
                 Image(systemName: "cube.transparent")
-                    .font(.system(size: 50))
-                    .foregroundStyle(.white.opacity(0.3))
+                    .font(.system(size: 40))
+                    .foregroundStyle(colors.tertiaryText)
             }
-            .padding(.top, 40)
+            .padding(.top, 24)
             
             Text("Your inventory is empty")
-                .font(.headline)
-                .foregroundStyle(.white.opacity(0.8))
+                .appFont(DS.Font.cardTitle, weight: .semibold)
+                .foregroundStyle(colors.secondaryText)
             
             Text("Add items to start trading and earning XP!")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.5))
+                .appFont(DS.Font.caption)
+                .foregroundStyle(colors.tertiaryText)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal)
+                .padding(.horizontal, DS.Spacing.edge)
             
             Button(action: onAdd) {
                 Text("List Your First Item")
-                    .fontWeight(.bold)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
+                    .appFont(DS.Font.body, weight: .bold)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
                     .background(Color.cyan)
                     .foregroundStyle(.black)
                     .clipShape(Capsule())
             }
-            .padding(.top, 10)
+            .padding(.top, 6)
+            .padding(.bottom, 24)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
         .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.large))
         .overlay(
-            RoundedRectangle(cornerRadius: 24)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.Radius.large)
+                .stroke(colors.border, lineWidth: 1)
         )
     }
 }

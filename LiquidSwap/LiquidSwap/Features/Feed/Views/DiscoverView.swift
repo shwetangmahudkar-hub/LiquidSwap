@@ -167,29 +167,29 @@ struct DiscoverView: View {
                 .ignoresSafeArea()
                 
                 // 2. HEADER: Floating "Island" Pill
-                VStack(spacing: 10) {
+                VStack(spacing: 8) {
                     
                     // THE MAIN CAPSULE
-                    HStack(spacing: 12) {
+                    HStack(spacing: 10) {
                         // Title Section
-                        HStack(spacing: 6) {
+                        HStack(spacing: 5) {
                             if #available(iOS 17.0, *) {
                                 Image(systemName: headerIcon)
-                                    .font(.headline)
+                                    .font(.subheadline.bold())
                                     .foregroundStyle(.cyan)
                                     .contentTransition(.symbolEffect(.replace))
                                 
                                 Text(headerTitle)
-                                    .font(.headline).bold()
+                                    .font(.subheadline.bold())
                                     .foregroundStyle(.white)
                                     .contentTransition(.numericText())
                             } else {
                                 Image(systemName: headerIcon)
-                                    .font(.headline)
+                                    .font(.subheadline.bold())
                                     .foregroundStyle(.cyan)
                                 
                                 Text(headerTitle)
-                                    .font(.headline).bold()
+                                    .font(.subheadline.bold())
                                     .foregroundStyle(.white)
                             }
                         }
@@ -201,7 +201,7 @@ struct DiscoverView: View {
                         }
                         
                         // Compact Toggle Divider
-                        Rectangle().fill(Color.white.opacity(0.2)).frame(width: 1, height: 20)
+                        Rectangle().fill(Color.white.opacity(0.2)).frame(width: 1, height: 18)
                         
                         // Mode Toggles
                         HStack(spacing: 0) {
@@ -219,20 +219,20 @@ struct DiscoverView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
                     .background(.ultraThinMaterial)
                     .clipShape(Capsule())
                     // Floating Shadow
-                    .shadow(color: .black.opacity(0.25), radius: 10, y: 5)
+                    .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
                     .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 1))
-                    .padding(.horizontal, 16)
-                    .padding(.top, 60) // Push down from dynamic island / notch
+                    .padding(.horizontal, 12)
+                    .padding(.top, 56)
                     
                     // SECONDARY PILL: Micro Filters
                     if mapMode == .recycling || mapMode == .repair {
                         ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
+                            HStack(spacing: 6) {
                                 if mapMode == .recycling {
                                     FilterChip(title: "All", icon: "square.grid.2x2.fill", isSelected: activeRecyclingFilter == nil) { withAnimation { activeRecyclingFilter = nil } }
                                     ForEach(RecyclingPoint.RecyclingType.allCases, id: \.self) { type in
@@ -245,14 +245,14 @@ struct DiscoverView: View {
                                     }
                                 }
                             }
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 4)
+                            .padding(.horizontal, 2)
+                            .padding(.vertical, 2)
                         }
-                        .padding(6)
+                        .padding(4)
                         .background(.ultraThinMaterial)
                         .clipShape(Capsule())
-                        .shadow(color: .black.opacity(0.2), radius: 5)
-                        .padding(.horizontal, 16)
+                        .shadow(color: .black.opacity(0.2), radius: 4)
+                        .padding(.horizontal, 12)
                         .transition(.move(edge: .top).combined(with: .opacity))
                     }
                 }
@@ -265,16 +265,16 @@ struct DiscoverView: View {
                             if let region = lastSearchedRegion { performSearch(region: region) }
                         }) {
                             Label("Search This Area", systemImage: "arrow.clockwise")
-                                .font(.caption).bold()
+                                .font(.caption.bold())
                                 .foregroundStyle(.white)
-                                .padding(.vertical, 10)
-                                .padding(.horizontal, 20)
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 16)
                                 .background(.ultraThinMaterial)
                                 .clipShape(Capsule())
                                 .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
-                                .shadow(radius: 5)
+                                .shadow(radius: 4)
                         }
-                        .padding(.bottom, 110)
+                        .padding(.bottom, 100)
                     }
                 }
             }
@@ -292,9 +292,9 @@ struct DiscoverView: View {
                 .presentationDragIndicator(.visible)
             }
             // Micro Interaction Sheets
-            .sheet(item: $selectedRecyclingPoint) { point in RecyclingDetailSheet(point: point).presentationDetents([.height(420), .large]).presentationDragIndicator(.visible) }
-            .sheet(item: $selectedSafeZone) { zone in SafeZoneDetailSheet(zone: zone).presentationDetents([.height(420), .large]).presentationDragIndicator(.visible) }
-            .sheet(item: $selectedRepairService) { service in RepairDetailSheet(service: service).presentationDetents([.height(420), .large]).presentationDragIndicator(.visible) }
+            .sheet(item: $selectedRecyclingPoint) { point in RecyclingDetailSheet(point: point).presentationDetents([.height(400), .large]).presentationDragIndicator(.visible) }
+            .sheet(item: $selectedSafeZone) { zone in SafeZoneDetailSheet(zone: zone).presentationDetents([.height(400), .large]).presentationDragIndicator(.visible) }
+            .sheet(item: $selectedRepairService) { service in RepairDetailSheet(service: service).presentationDetents([.height(400), .large]).presentationDragIndicator(.visible) }
         }
     }
     
@@ -406,7 +406,7 @@ struct ClusteredMapView: UIViewRepresentable {
         let mapView = MKMapView()
         mapView.delegate = context.coordinator
         mapView.showsUserLocation = true
-        mapView.showsCompass = false // Cleaner UI
+        mapView.showsCompass = false
         
         // 1. Enable Realistic Elevation (3D Buildings)
         if #available(iOS 16.0, *) {
@@ -419,19 +419,18 @@ struct ClusteredMapView: UIViewRepresentable {
         mapView.register(MKMarkerAnnotationView.self, forAnnotationViewWithReuseIdentifier: "safety")
         mapView.register(MKMarkerAnnotationView.self, forAnnotationViewWithReuseIdentifier: "repair")
         
-        // 3. ✨ CINEMATIC 3D CAMERA SETUP
+        // 3. CINEMATIC 3D CAMERA SETUP
         if let userLoc = LocationManager.shared.userLocation {
             let camera = MKMapCamera(
                 lookingAtCenter: userLoc.coordinate,
-                fromDistance: 1500, // Altitude in meters (Ideal for neighborhoods)
-                pitch: 45,          // Angle (0 is flat, 45 is 3D)
-                heading: 0          // North facing
+                fromDistance: 1500,
+                pitch: 45,
+                heading: 0
             )
             mapView.setCamera(camera, animated: false)
         } else {
-            // Fallback default (Toronto)
             let fallbackLoc = CLLocationCoordinate2D(latitude: 43.6532, longitude: -79.3832)
-             let camera = MKMapCamera(
+            let camera = MKMapCamera(
                 lookingAtCenter: fallbackLoc,
                 fromDistance: 1500,
                 pitch: 45,
@@ -450,7 +449,6 @@ struct ClusteredMapView: UIViewRepresentable {
         
         if mapMode == .trades {
             newAnnotations = items.map { UnifiedAnnotation(item: $0) }
-            // Privacy Rings for Trades
             newOverlays = items.compactMap { item in
                 guard let lat = item.latitude, let lon = item.longitude else { return nil }
                 return MKCircle(center: CLLocationCoordinate2D(latitude: lat, longitude: lon), radius: 500)
@@ -463,7 +461,6 @@ struct ClusteredMapView: UIViewRepresentable {
             newAnnotations = repairServices.map { UnifiedAnnotation(service: $0) }
         }
         
-        // Efficient Diffing
         let currentIDs = Set(currentAnnotations.map { $0.id })
         let newIDs = Set(newAnnotations.map { $0.id })
         
@@ -484,7 +481,6 @@ struct ClusteredMapView: UIViewRepresentable {
         var parent: ClusteredMapView
         init(parent: ClusteredMapView) { self.parent = parent }
         
-        // MARK: - Renderer (Privacy Rings)
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let circle = overlay as? MKCircle {
                 let renderer = MKCircleRenderer(circle: circle)
@@ -496,7 +492,6 @@ struct ClusteredMapView: UIViewRepresentable {
             return MKOverlayRenderer(overlay: overlay)
         }
         
-        // MARK: - Annotations (Clustering + Styling)
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
             guard let annotation = annotation as? UnifiedAnnotation else { return nil }
             var identifier = "trade"; var clusterID = "trade-cluster"; var glyphImage = "shippingbox.fill"; var color = UIColor.cyan
@@ -548,11 +543,34 @@ class UnifiedAnnotation: NSObject, MKAnnotation {
 // MARK: - Subviews
 struct ModeButton: View {
     let icon: String; let isSelected: Bool; let action: () -> Void
-    var body: some View { Button(action: action) { Image(systemName: icon).font(.body).padding(10).background(isSelected ? Color.white : Color.clear).foregroundStyle(isSelected ? .black : .white.opacity(0.6)).clipShape(Circle()) } }
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.caption)
+                .padding(8)
+                .background(isSelected ? Color.white : Color.clear)
+                .foregroundStyle(isSelected ? .black : .white.opacity(0.6))
+                .clipShape(Circle())
+        }
+    }
 }
+
 struct FilterChip: View {
     let title: String; let icon: String; let isSelected: Bool; let action: () -> Void
-    var body: some View { Button(action: action) { HStack(spacing: 4) { Image(systemName: icon); Text(title) }.font(.caption2).bold().padding(.vertical, 6).padding(.horizontal, 10).background(isSelected ? Color.cyan : Color.white.opacity(0.1)).foregroundStyle(isSelected ? .black : .white).clipShape(Capsule()) } }
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                Text(title)
+            }
+            .font(.caption2.bold())
+            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .background(isSelected ? Color.cyan : Color.white.opacity(0.1))
+            .foregroundStyle(isSelected ? .black : .white)
+            .clipShape(Capsule())
+        }
+    }
 }
 
 // MARK: - Look Around
@@ -561,24 +579,53 @@ struct SafeLookAroundView: View {
     @State private var scene: MKLookAroundScene?
     @State private var hasLookAround: Bool = false
     @State private var isLoading: Bool = true
+    
     var body: some View {
         Group {
-            if isLoading { ZStack { RoundedRectangle(cornerRadius: 16).fill(Color.black.opacity(0.2)); ProgressView() } }
-            else if let scene = scene, hasLookAround {
-                if #available(iOS 17.0, *) { LookAroundPreview(initialScene: scene).clipShape(RoundedRectangle(cornerRadius: 16)).overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.1), lineWidth: 1)) }
-                else { LegacyLookAroundView(scene: scene).clipShape(RoundedRectangle(cornerRadius: 16)) }
+            if isLoading {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14).fill(Color.black.opacity(0.2))
+                    ProgressView()
+                }
+            } else if let scene = scene, hasLookAround {
+                if #available(iOS 17.0, *) {
+                    LookAroundPreview(initialScene: scene)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.1), lineWidth: 1))
+                } else {
+                    LegacyLookAroundView(scene: scene)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
             } else {
-                ZStack { RoundedRectangle(cornerRadius: 16).fill(Color.black.opacity(0.1)); VStack(spacing: 8) { Image(systemName: "eye.slash.fill").font(.largeTitle).foregroundStyle(.white.opacity(0.3)); Text("No Preview Available").font(.caption).foregroundStyle(.white.opacity(0.5)) } }
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14).fill(Color.black.opacity(0.1))
+                    VStack(spacing: 6) {
+                        Image(systemName: "eye.slash.fill").font(.title2).foregroundStyle(.white.opacity(0.3))
+                        Text("No Preview Available").font(.caption2).foregroundStyle(.white.opacity(0.5))
+                    }
+                }
             }
-        }.task(id: mapItem) { await fetchScene() }
+        }
+        .task(id: mapItem) { await fetchScene() }
     }
+    
     private func fetchScene() async {
         guard let mapItem = mapItem else { isLoading = false; return }
         let request = MKLookAroundSceneRequest(mapItem: mapItem)
-        do { if let s = try await request.scene { self.scene = s; self.hasLookAround = true } else { self.hasLookAround = false } } catch { self.hasLookAround = false }
+        do {
+            if let s = try await request.scene {
+                self.scene = s
+                self.hasLookAround = true
+            } else {
+                self.hasLookAround = false
+            }
+        } catch {
+            self.hasLookAround = false
+        }
         withAnimation { self.isLoading = false }
     }
 }
+
 struct LegacyLookAroundView: UIViewControllerRepresentable {
     let scene: MKLookAroundScene
     func makeUIViewController(context: Context) -> MKLookAroundViewController { MKLookAroundViewController(scene: scene) }
@@ -587,12 +634,45 @@ struct LegacyLookAroundView: UIViewControllerRepresentable {
 
 // MARK: - Sheets
 
-struct RecyclingDetailSheet: View { let point: RecyclingPoint; var body: some View { StandardDetailLayout(icon: point.type.icon, color: Color(uiColor: point.type.color), title: point.name, badge: point.type.rawValue, address: point.address, mapItem: point.mapItem) } }
-struct SafeZoneDetailSheet: View { let zone: SafeZone; var body: some View { StandardDetailLayout(icon: zone.type.icon, color: Color(uiColor: zone.type.color), title: zone.name, badge: "VERIFIED SAFE", address: zone.address, isVerified: true, mapItem: zone.mapItem) } }
-struct RepairDetailSheet: View { let service: RepairService; var body: some View { StandardDetailLayout(icon: service.type.icon, color: Color(uiColor: service.type.color), title: service.name, badge: service.type.rawValue, address: service.address, mapItem: service.mapItem) } }
+struct RecyclingDetailSheet: View {
+    let point: RecyclingPoint
+    var body: some View {
+        StandardDetailLayout(icon: point.type.icon, color: Color(uiColor: point.type.color), title: point.name, badge: point.type.rawValue, address: point.address, mapItem: point.mapItem)
+    }
+}
+
+struct SafeZoneDetailSheet: View {
+    let zone: SafeZone
+    var body: some View {
+        StandardDetailLayout(icon: zone.type.icon, color: Color(uiColor: zone.type.color), title: zone.name, badge: "VERIFIED SAFE", address: zone.address, isVerified: true, mapItem: zone.mapItem)
+    }
+}
+
+struct RepairDetailSheet: View {
+    let service: RepairService
+    var body: some View {
+        StandardDetailLayout(icon: service.type.icon, color: Color(uiColor: service.type.color), title: service.name, badge: service.type.rawValue, address: service.address, mapItem: service.mapItem)
+    }
+}
 
 struct StandardDetailLayout: View {
-    let icon: String; let color: Color; let title: String; let badge: String; let address: String; var isVerified: Bool = false; let mapItem: MKMapItem?
+    @Environment(\.colorScheme) private var colorScheme
+    
+    let icon: String
+    let color: Color
+    let title: String
+    let badge: String
+    let address: String
+    var isVerified: Bool = false
+    let mapItem: MKMapItem?
+    
+    private var primaryText: Color {
+        colorScheme == .dark ? .white : .black
+    }
+    
+    private var secondaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.9) : .black.opacity(0.8)
+    }
     
     var body: some View {
         ZStack {
@@ -600,77 +680,96 @@ struct StandardDetailLayout: View {
             
             VStack(spacing: 0) {
                 // Handle bar
-                Capsule().fill(Color.white.opacity(0.2)).frame(width: 40, height: 4).padding(.top, 10).padding(.bottom, 20)
+                Capsule().fill(Color.white.opacity(0.2)).frame(width: 36, height: 4).padding(.top, 8).padding(.bottom, 14)
                 
                 // 1. Look Around Preview (Hero)
                 SafeLookAroundView(mapItem: mapItem)
-                    .frame(height: 140)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
+                    .frame(height: 130)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
                 
                 // 2. Info Header
-                HStack(spacing: 16) {
-                    ZStack { Circle().fill(color.opacity(0.2)).frame(width: 50, height: 50); Image(systemName: icon).font(.title2).foregroundStyle(color) }
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack { Text(title).font(.headline).bold().foregroundStyle(.white).lineLimit(1); if isVerified { Image(systemName: "checkmark.seal.fill").foregroundStyle(.cyan) } }
-                        Text(badge).font(.caption2).bold().padding(.horizontal, 8).padding(.vertical, 3).background(color.opacity(0.2)).foregroundStyle(color).cornerRadius(4)
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle().fill(color.opacity(0.2)).frame(width: 44, height: 44)
+                        Image(systemName: icon).font(.title3).foregroundStyle(color)
+                    }
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(title).font(.subheadline.bold()).foregroundStyle(primaryText).lineLimit(1)
+                            if isVerified { Image(systemName: "checkmark.seal.fill").foregroundStyle(.cyan) }
+                        }
+                        Text(badge).font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(color.opacity(0.2)).foregroundStyle(color).cornerRadius(4)
                     }
                     Spacer()
                 }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 
-                Divider().background(Color.white.opacity(0.1)).padding(.vertical, 16)
+                Divider().background(Color.white.opacity(0.1)).padding(.vertical, 12)
                 
                 // 3. Info Rows
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     HStack {
-                        Image(systemName: "mappin.and.ellipse").foregroundStyle(.gray).frame(width: 20)
-                        Text(address).font(.subheadline).foregroundStyle(.white.opacity(0.9)).lineLimit(1)
+                        Image(systemName: "mappin.and.ellipse").foregroundStyle(.gray).frame(width: 18)
+                        Text(address).font(.caption).foregroundStyle(secondaryText).lineLimit(1)
                         Spacer()
                     }
                     if let phone = mapItem?.phoneNumber {
                         HStack {
-                            Image(systemName: "phone.fill").foregroundStyle(.gray).frame(width: 20)
-                            Text(phone).font(.subheadline).foregroundStyle(.white.opacity(0.9))
+                            Image(systemName: "phone.fill").foregroundStyle(.gray).frame(width: 18)
+                            Text(phone).font(.caption).foregroundStyle(secondaryText)
                             Spacer()
                         }
                     }
                     if let url = mapItem?.url {
                         HStack {
-                            Image(systemName: "link").foregroundStyle(.gray).frame(width: 20)
-                            Text(url.host ?? "Website").font(.subheadline).foregroundStyle(.cyan).underline()
+                            Image(systemName: "link").foregroundStyle(.gray).frame(width: 18)
+                            Text(url.host ?? "Website").font(.caption).foregroundStyle(.cyan).underline()
                             Spacer()
                         }
                     }
                 }
-                .padding(.horizontal, 24)
+                .padding(.horizontal, 16)
                 
                 Spacer()
                 
                 // 4. Action Grid
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     Button(action: { mapItem?.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving]) }) {
-                        VStack(spacing: 6) { Image(systemName: "car.fill").font(.headline); Text("Go").font(.caption).bold() }
-                            .frame(maxWidth: .infinity).frame(height: 60).background(Color.blue).foregroundStyle(.white).cornerRadius(12)
+                        VStack(spacing: 4) {
+                            Image(systemName: "car.fill").font(.subheadline)
+                            Text("Go").font(.caption2.bold())
+                        }
+                        .frame(maxWidth: .infinity).frame(height: 52).background(Color.blue).foregroundStyle(.white).cornerRadius(10)
                     }
                     if let phone = mapItem?.phoneNumber {
                         Button(action: { if let url = URL(string: "tel://\(phone.filter{!$0.isWhitespace})") { UIApplication.shared.open(url) } }) {
-                            VStack(spacing: 6) { Image(systemName: "phone.fill").font(.headline); Text("Call").font(.caption).bold() }
-                                .frame(maxWidth: .infinity).frame(height: 60).background(Color.white.opacity(0.1)).foregroundStyle(.green).cornerRadius(12)
+                            VStack(spacing: 4) {
+                                Image(systemName: "phone.fill").font(.subheadline)
+                                Text("Call").font(.caption2.bold())
+                            }
+                            .frame(maxWidth: .infinity).frame(height: 52).background(Color.white.opacity(0.1)).foregroundStyle(.green).cornerRadius(10)
                         }
                     }
                     if let url = mapItem?.url {
                         Button(action: { UIApplication.shared.open(url) }) {
-                            VStack(spacing: 6) { Image(systemName: "globe").font(.headline); Text("Web").font(.caption).bold() }
-                                .frame(maxWidth: .infinity).frame(height: 60).background(Color.white.opacity(0.1)).foregroundStyle(.cyan).cornerRadius(12)
+                            VStack(spacing: 4) {
+                                Image(systemName: "globe").font(.subheadline)
+                                Text("Web").font(.caption2.bold())
+                            }
+                            .frame(maxWidth: .infinity).frame(height: 52).background(Color.white.opacity(0.1)).foregroundStyle(.cyan).cornerRadius(10)
                         }
                     }
                     Button(action: { mapItem?.openInMaps() }) {
-                        VStack(spacing: 6) { Image(systemName: "info.circle").font(.headline); Text("More").font(.caption).bold() }
-                            .frame(maxWidth: .infinity).frame(height: 60).background(Color.white.opacity(0.1)).foregroundStyle(.gray).cornerRadius(12)
+                        VStack(spacing: 4) {
+                            Image(systemName: "info.circle").font(.subheadline)
+                            Text("More").font(.caption2.bold())
+                        }
+                        .frame(maxWidth: .infinity).frame(height: 52).background(Color.white.opacity(0.1)).foregroundStyle(.gray).cornerRadius(10)
                     }
                 }
-                .padding(.horizontal, 16).padding(.bottom, 10)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
             }
         }
     }

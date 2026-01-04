@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ChatsListView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var tradeManager = TradeManager.shared
     @ObservedObject var userManager = UserManager.shared
     @ObservedObject var chatManager = ChatManager.shared
@@ -8,13 +9,25 @@ struct ChatsListView: View {
     // UI State
     @State private var searchText = ""
     
+    // MARK: - Adaptive Colors
+    private var primaryText: Color {
+        colorScheme == .dark ? .white : .black
+    }
+    
+    private var secondaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.5) : .black.opacity(0.5)
+    }
+    
+    private var tertiaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.4) : .black.opacity(0.4)
+    }
+    
     // Computed Properties
     var filteredTrades: [TradeOffer] {
         let trades = tradeManager.activeTrades
         
         if searchText.isEmpty {
             return trades.sorted { t1, t2 in
-                // Sort Priority: 1. Pending Action, 2. Newest Message, 3. Newest Trade
                 let t1Action = requiresAction(t1)
                 let t2Action = requiresAction(t2)
                 
@@ -44,48 +57,43 @@ struct ChatsListView: View {
                     // 2. Header
                     HStack {
                         Text("Chats")
-                            .font(.system(size: 34, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .shadow(color: .cyan.opacity(0.5), radius: 10)
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
+                            .foregroundStyle(primaryText)
+                            .shadow(color: .cyan.opacity(0.4), radius: 8)
                         
                         Spacer()
                         
                         if tradeManager.isLoading {
-                            ProgressView().tint(.white)
+                            ProgressView().tint(primaryText)
                         }
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 60)
-                    .padding(.bottom, 10)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 56)
+                    .padding(.bottom, 8)
                     
                     // 3. Search Bar
-                    HStack(spacing: 12) {
+                    HStack(spacing: 10) {
                         Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.white.opacity(0.5))
+                            .foregroundStyle(secondaryText)
                         TextField("Search chats...", text: $searchText)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(primaryText)
                             .tint(.cyan)
                     }
-                    .padding(12)
+                    .padding(10)
                     .background(.ultraThinMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 14)
                     
                     // 4. Main List
                     if filteredTrades.isEmpty && !tradeManager.isLoading {
                         emptyState
                     } else {
                         ScrollView(showsIndicators: false) {
-                            LazyVStack(spacing: 16) {
+                            LazyVStack(spacing: 12) {
                                 ForEach(filteredTrades) { trade in
-                                    // Identify Partner
                                     let partnerId = (trade.senderId == userManager.currentUser?.id) ? trade.receiverId : trade.senderId
-                                    
-                                    // Get Cached Profile (Instant O(1) Lookup)
                                     let cachedProfile = tradeManager.relatedProfiles[partnerId]
-                                    
-                                    // Get Last Message (Realtime)
                                     let lastMsg = chatManager.conversations[trade.id]?.last
                                     
                                     NavigationLink(destination: ChatRoomView(trade: trade)) {
@@ -97,10 +105,9 @@ struct ChatsListView: View {
                                         )
                                     }
                                     .buttonStyle(.plain)
-                                    // ✨ Rule 4: Context Menu for Quick Actions
                                     .contextMenu {
                                         Button {
-                                            // Navigation handled by tap, but valid for context
+                                            // Navigation handled by tap
                                         } label: {
                                             Label("Open Chat", systemImage: "bubble.left.and.bubble.right")
                                         }
@@ -115,14 +122,13 @@ struct ChatsListView: View {
                                     }
                                 }
                             }
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 100)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 90)
                         }
                         .refreshable {
                             Haptics.shared.playLight()
                             await tradeManager.loadTradesData()
                             if let myId = userManager.currentUser?.id {
-                                // ✨ FIXED: Use fetchInbox instead of fetchAllMessages
                                 await chatManager.fetchInbox(userId: myId)
                             }
                         }
@@ -130,11 +136,9 @@ struct ChatsListView: View {
                 }
             }
             .onAppear {
-                // Ensure data is fresh when view appears
                 Task {
                     await tradeManager.loadTradesData()
                     if let myId = userManager.currentUser?.id {
-                        // ✨ FIXED: Use fetchInbox here as well
                         await chatManager.fetchInbox(userId: myId)
                     }
                 }
@@ -145,37 +149,35 @@ struct ChatsListView: View {
     // Logic: Does this trade need my attention?
     func requiresAction(_ trade: TradeOffer) -> Bool {
         guard let myId = userManager.currentUser?.id else { return false }
-        // If I received it and it's pending -> I need to act
         if trade.receiverId == myId && trade.status == "pending" { return true }
-        // If I received a counter offer -> I need to act
         if trade.receiverId == myId && trade.status == "countered" { return true }
         return false
     }
     
     private var emptyState: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 16) {
             Spacer()
             
             ZStack {
                 Circle()
-                    .fill(Color.white.opacity(0.05))
-                    .frame(width: 100, height: 100)
+                    .fill(colorScheme == .dark ? Color.white.opacity(0.05) : Color.black.opacity(0.05))
+                    .frame(width: 90, height: 90)
                 
                 Image(systemName: "bubble.left.and.bubble.right.fill")
-                    .font(.system(size: 40))
+                    .font(.system(size: 36))
                     .foregroundStyle(.cyan.opacity(0.5))
             }
-            .padding(.bottom, 10)
+            .padding(.bottom, 8)
             
             Text("No active chats")
                 .font(.title3.bold())
-                .foregroundStyle(.white.opacity(0.8))
+                .foregroundStyle(colorScheme == .dark ? .white.opacity(0.8) : .black.opacity(0.8))
             
             Text("When you accept a trade or make an offer, the conversation will appear here.")
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(secondaryText)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
+                .padding(.horizontal, 32)
             
             Spacer()
             Spacer()
@@ -186,10 +188,25 @@ struct ChatsListView: View {
 // MARK: - Gamified Row Component
 
 struct GamifiedChatRow: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
     let trade: TradeOffer
     let partnerProfile: UserProfile?
     let lastMessage: Message?
     let requiresAction: Bool
+    
+    // MARK: - Adaptive Colors
+    private var primaryText: Color {
+        colorScheme == .dark ? .white : .black
+    }
+    
+    private var secondaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.6) : .black.opacity(0.6)
+    }
+    
+    private var tertiaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.4) : .black.opacity(0.4)
+    }
     
     // Computed context
     private var incomingItem: TradeItem? {
@@ -211,7 +228,7 @@ struct GamifiedChatRow: View {
     }
     
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             // 1. Avatar with Level Ring
             ZStack {
                 // Level Ring
@@ -219,45 +236,45 @@ struct GamifiedChatRow: View {
                     .trim(from: 0, to: min(Double(partnerTradeCount) / 50.0, 1.0))
                     .stroke(
                         AngularGradient(colors: [rankColor, rankColor.opacity(0.3)], center: .center),
-                        style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
-                    .frame(width: 58, height: 58)
-                    .shadow(color: rankColor.opacity(0.4), radius: 5)
+                    .frame(width: 52, height: 52)
+                    .shadow(color: rankColor.opacity(0.4), radius: 4)
                 
                 // Avatar
                 if let url = partnerProfile?.avatarUrl {
                     AsyncImageView(filename: url)
                         .scaledToFill()
-                        .frame(width: 50, height: 50)
+                        .frame(width: 44, height: 44)
                         .clipShape(Circle())
                 } else {
                     Image(systemName: "person.circle.fill")
                         .resizable()
-                        .foregroundStyle(.white.opacity(0.2))
-                        .frame(width: 50, height: 50)
+                        .foregroundStyle(tertiaryText)
+                        .frame(width: 44, height: 44)
                 }
                 
-                // Online Indicator (Mock logic)
+                // Online Indicator
                 Circle()
                     .fill(Color.green)
-                    .frame(width: 12, height: 12)
-                    .overlay(Circle().stroke(Color.black, lineWidth: 2))
-                    .offset(x: 18, y: 18)
+                    .frame(width: 10, height: 10)
+                    .overlay(Circle().stroke(Color.black, lineWidth: 1.5))
+                    .offset(x: 16, y: 16)
             }
             
             // 2. Main Info
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 // Top Row: Name + Verification + Time
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Text(partnerProfile?.username ?? "Loading...")
-                        .font(.headline.bold())
-                        .foregroundStyle(.white)
+                        .font(.subheadline.bold())
+                        .foregroundStyle(primaryText)
                         .lineLimit(1)
                     
                     if partnerProfile?.isVerified == true {
                         Image(systemName: "checkmark.seal.fill")
-                            .font(.caption)
+                            .font(.caption2)
                             .foregroundStyle(.cyan)
                     }
                     
@@ -266,33 +283,31 @@ struct GamifiedChatRow: View {
                     if let date = lastMessage?.createdAt {
                         Text(date.formatted(.dateTime.hour().minute()))
                             .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(tertiaryText)
                     } else {
                         Text(trade.createdAt.formatted(.dateTime.month().day()))
                             .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(tertiaryText)
                     }
                 }
                 
                 // Bottom Row: Message Preview or Status
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     if let msg = lastMessage {
-                        // Show Message
                         Text(msg.content.isEmpty ? "Sent an image" : msg.content)
-                            .font(.subheadline)
-                            .foregroundStyle(requiresAction ? .white : .white.opacity(0.6))
+                            .font(.caption)
+                            .foregroundStyle(requiresAction ? primaryText : secondaryText)
                             .fontWeight(requiresAction ? .semibold : .regular)
                             .lineLimit(1)
                     } else {
-                        // Show Status if no messages yet
                         StatusPillSmall(status: trade.status)
                         
                         Text("•")
-                            .foregroundStyle(.white.opacity(0.3))
+                            .foregroundStyle(tertiaryText)
                         
                         Text("For \(incomingItem?.title ?? "Item")")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.6))
+                            .font(.caption2)
+                            .foregroundStyle(secondaryText)
                             .lineLimit(1)
                     }
                 }
@@ -304,25 +319,25 @@ struct GamifiedChatRow: View {
             if requiresAction {
                 Circle()
                     .fill(Color.cyan)
-                    .frame(width: 10, height: 10)
-                    .shadow(color: .cyan, radius: 5)
+                    .frame(width: 9, height: 9)
+                    .shadow(color: .cyan, radius: 4)
             } else {
                 Image(systemName: "chevron.right")
-                    .font(.caption.bold())
-                    .foregroundStyle(.white.opacity(0.3))
+                    .font(.caption2.bold())
+                    .foregroundStyle(tertiaryText)
             }
         }
-        .padding(16)
+        .padding(14)
         .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 24)
+            RoundedRectangle(cornerRadius: 20)
                 .stroke(
                     requiresAction ? AnyShapeStyle(Color.cyan.opacity(0.5)) : AnyShapeStyle(Color.white.opacity(0.1)),
                     lineWidth: requiresAction ? 1.5 : 1
                 )
         )
-        .shadow(color: .black.opacity(0.1), radius: 5, y: 2)
+        .shadow(color: .black.opacity(0.08), radius: 4, y: 2)
     }
 }
 
@@ -343,9 +358,9 @@ struct StatusPillSmall: View {
     
     var body: some View {
         Text(status.capitalized)
-            .font(.system(size: 10, weight: .bold))
+            .font(.system(size: 9, weight: .bold))
             .foregroundStyle(color)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(color.opacity(0.15))
             .clipShape(Capsule())

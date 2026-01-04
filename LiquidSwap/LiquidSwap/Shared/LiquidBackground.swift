@@ -1,31 +1,60 @@
 import SwiftUI
 
 struct LiquidBackground: View {
+    @Environment(\.colorScheme) private var colorScheme
     @State private var animate = false
+    
+    // MARK: - Adaptive Colors
+    private var backgroundColor: Color {
+        colorScheme == .dark ? Color.black : Color.white
+    }
+    
+    private var orb1Color: Color {
+        colorScheme == .dark
+            ? Color.cyan.opacity(0.4)
+            : Color.cyan.opacity(0.15)
+    }
+    
+    private var orb2Color: Color {
+        colorScheme == .dark
+            ? Color.blue.opacity(0.4)
+            : Color.blue.opacity(0.12)
+    }
+    
+    private var orb3Color: Color {
+        colorScheme == .dark
+            ? Color.purple.opacity(0.3)
+            : Color.purple.opacity(0.1)
+    }
+    
+    private var orbBlur: CGFloat {
+        colorScheme == .dark ? 60 : 80
+    }
     
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            // Adaptive base background
+            backgroundColor.ignoresSafeArea()
             
             // Orb 1
             Circle()
-                .fill(Color.cyan.opacity(0.4))
+                .fill(orb1Color)
                 .frame(width: 300, height: 300)
-                .blur(radius: 60)
+                .blur(radius: orbBlur)
                 .offset(x: animate ? -100 : 100, y: animate ? -100 : 50)
             
             // Orb 2
             Circle()
-                .fill(Color.blue.opacity(0.4))
+                .fill(orb2Color)
                 .frame(width: 300, height: 300)
-                .blur(radius: 60)
+                .blur(radius: orbBlur)
                 .offset(x: animate ? 100 : -100, y: animate ? 100 : -50)
             
             // Orb 3
             Circle()
-                .fill(Color.purple.opacity(0.3))
+                .fill(orb3Color)
                 .frame(width: 250, height: 250)
-                .blur(radius: 50)
+                .blur(radius: orbBlur - 10)
                 .offset(y: animate ? 150 : -150)
         }
         .onAppear {
@@ -35,4 +64,14 @@ struct LiquidBackground: View {
         }
         .ignoresSafeArea()
     }
+}
+
+#Preview("Dark Mode") {
+    LiquidBackground()
+        .preferredColorScheme(.dark)
+}
+
+#Preview("Light Mode") {
+    LiquidBackground()
+        .preferredColorScheme(.light)
 }

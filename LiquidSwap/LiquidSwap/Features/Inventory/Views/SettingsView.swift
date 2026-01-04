@@ -3,6 +3,7 @@ import Supabase
 
 struct SettingsView: View {
     @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     
     // Dependencies
     @ObservedObject var userManager = UserManager.shared
@@ -12,6 +13,27 @@ struct SettingsView: View {
     @State private var showSignOutAlert = false
     @State private var isProcessing = false
     @AppStorage("isDarkMode") private var isDarkMode = true
+    
+    // MARK: - Adaptive Colors
+    private var primaryText: Color {
+        colorScheme == .dark ? .white : .black
+    }
+    
+    private var secondaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.6) : .black.opacity(0.5)
+    }
+    
+    private var tertiaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.3) : .black.opacity(0.3)
+    }
+    
+    private var buttonBackground: Color {
+        colorScheme == .dark ? .white.opacity(0.1) : .black.opacity(0.05)
+    }
+    
+    private var buttonBorder: Color {
+        colorScheme == .dark ? .white.opacity(0.2) : .black.opacity(0.1)
+    }
     
     var body: some View {
         ZStack {
@@ -24,9 +46,9 @@ struct SettingsView: View {
                     Button(action: { dismiss() }) {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 44, height: 44)
-                            .background(Color.white.opacity(0.1))
+                            .foregroundStyle(primaryText)
+                            .frame(width: 40, height: 40)
+                            .background(buttonBackground)
                             .clipShape(Circle())
                     }
                     
@@ -34,49 +56,49 @@ struct SettingsView: View {
                     
                     Text("Settings")
                         .font(.headline.bold())
-                        .foregroundStyle(.white)
+                        .foregroundStyle(primaryText)
                     
                     Spacer()
                     
                     // Balance Spacer
-                    Color.clear.frame(width: 44, height: 44)
+                    Color.clear.frame(width: 40, height: 40)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 10)
-                .padding(.bottom, 20)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
                 
                 // 3. Settings Content
                 ScrollView {
-                    VStack(spacing: 24) {
+                    VStack(spacing: 16) {
                         
                         // User Info Card
                         if let user = userManager.currentUser {
-                            HStack(spacing: 16) {
+                            HStack(spacing: 12) {
                                 AsyncImageView(filename: user.avatarUrl)
                                     .scaledToFill()
-                                    .frame(width: 60, height: 60)
+                                    .frame(width: 52, height: 52)
                                     .clipShape(Circle())
-                                    .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 2))
+                                    .overlay(Circle().stroke(buttonBorder, lineWidth: 2))
                                 
-                                VStack(alignment: .leading, spacing: 4) {
+                                VStack(alignment: .leading, spacing: 2) {
                                     Text(user.username)
                                         .font(.title3.bold())
-                                        .foregroundStyle(.white)
+                                        .foregroundStyle(primaryText)
                                     
                                     Text(user.isVerified ? "Verified Trader" : "Standard Account")
                                         .font(.caption)
-                                        .foregroundStyle(user.isVerified ? .cyan : .white.opacity(0.6))
+                                        .foregroundStyle(user.isVerified ? .cyan : secondaryText)
                                 }
                                 
                                 Spacer()
                             }
-                            .padding(20)
+                            .padding(16)
                             .background(.ultraThinMaterial)
-                            .clipShape(RoundedRectangle(cornerRadius: 24))
+                            .clipShape(RoundedRectangle(cornerRadius: 20))
                         }
                         
                         // Preferences Section
-                        VStack(spacing: 16) {
+                        VStack(spacing: 12) {
                             SectionHeader(title: "PREFERENCES")
                             
                             SettingsToggleRow(icon: "moon.fill", title: "Dark Mode", isOn: $isDarkMode)
@@ -89,12 +111,12 @@ struct SettingsView: View {
                                 // Open Privacy logic
                             }
                         }
-                        .padding(20)
+                        .padding(16)
                         .background(.ultraThinMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 24))
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
                         
                         // Support Section
-                        VStack(spacing: 16) {
+                        VStack(spacing: 12) {
                             SectionHeader(title: "SUPPORT")
                             
                             SettingsLinkRow(icon: "questionmark.circle.fill", title: "Help Center") {
@@ -109,29 +131,30 @@ struct SettingsView: View {
                                 Spacer()
                                 Text("Version 1.0.0 (Build 24)")
                                     .font(.caption2)
-                                    .foregroundStyle(.white.opacity(0.3))
+                                    .foregroundStyle(tertiaryText)
                                 Spacer()
                             }
-                            .padding(.top, 8)
+                            .padding(.top, 4)
                         }
-                        .padding(20)
+                        .padding(16)
                         .background(.ultraThinMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 24))
+                        .clipShape(RoundedRectangle(cornerRadius: 20))
                         
                         // Danger Zone
                         Button(action: { showDeleteAlert = true }) {
                             Text("Delete Account")
                                 .font(.subheadline.bold())
                                 .foregroundStyle(.red.opacity(0.8))
-                                .padding()
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 12)
                                 .background(Color.red.opacity(0.1))
                                 .clipShape(Capsule())
                         }
-                        .padding(.top, 10)
+                        .padding(.top, 4)
                         
-                        Spacer(minLength: 100)
+                        Spacer(minLength: 80)
                     }
-                    .padding(20)
+                    .padding(.horizontal, 12)
                 }
             }
             
@@ -141,22 +164,22 @@ struct SettingsView: View {
                 Button(action: { showSignOutAlert = true }) {
                     ZStack {
                         Capsule()
-                            .fill(Color.white.opacity(0.1))
-                            .frame(height: 56)
+                            .fill(buttonBackground)
+                            .frame(height: 50)
                             .overlay(
-                                Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1)
+                                Capsule().stroke(buttonBorder, lineWidth: 1)
                             )
                         
-                        HStack {
+                        HStack(spacing: 8) {
                             Image(systemName: "rectangle.portrait.and.arrow.right")
                             Text("Sign Out")
-                                .font(.headline.bold())
+                                .font(.subheadline.bold())
                         }
-                        .foregroundStyle(.white)
+                        .foregroundStyle(primaryText)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 30)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 24)
             }
             
             // 5. Loading Overlay
@@ -186,7 +209,6 @@ struct SettingsView: View {
         isProcessing = true
         Task {
             try? await SupabaseConfig.client.auth.signOut()
-            // The Auth listener in ContentView/UserManager will handle the state change
             await MainActor.run {
                 isProcessing = false
             }
@@ -196,8 +218,6 @@ struct SettingsView: View {
     func performDeleteAccount() {
         isProcessing = true
         Task {
-            // Logic to delete user data from DB would go here
-            // Then sign out
             try? await SupabaseConfig.client.auth.signOut()
             await MainActor.run {
                 isProcessing = false
@@ -211,7 +231,7 @@ struct SettingsView: View {
         HStack {
             Text(title)
                 .font(.caption.bold())
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(secondaryText)
             Spacer()
         }
     }
@@ -220,29 +240,39 @@ struct SettingsView: View {
 // MARK: - Reusable Row Components
 
 struct SettingsLinkRow: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
     let icon: String
     let title: String
     let action: () -> Void
     
+    private var primaryText: Color {
+        colorScheme == .dark ? .white : .black
+    }
+    
+    private var tertiaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.3) : .black.opacity(0.3)
+    }
+    
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.system(size: 18))
+                    .font(.system(size: 16))
                     .foregroundStyle(.cyan)
-                    .frame(width: 24)
+                    .frame(width: 22)
                 
                 Text(title)
                     .font(.subheadline)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(primaryText)
                 
                 Spacer()
                 
                 Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.3))
+                    .font(.caption2)
+                    .foregroundStyle(tertiaryText)
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -250,20 +280,26 @@ struct SettingsLinkRow: View {
 }
 
 struct SettingsToggleRow: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
     let icon: String
     let title: String
     @Binding var isOn: Bool
     
+    private var primaryText: Color {
+        colorScheme == .dark ? .white : .black
+    }
+    
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 18))
+                .font(.system(size: 16))
                 .foregroundStyle(.purple)
-                .frame(width: 24)
+                .frame(width: 22)
             
             Text(title)
                 .font(.subheadline)
-                .foregroundStyle(.white)
+                .foregroundStyle(primaryText)
             
             Spacer()
             
@@ -271,6 +307,6 @@ struct SettingsToggleRow: View {
                 .labelsHidden()
                 .tint(.purple)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
     }
 }

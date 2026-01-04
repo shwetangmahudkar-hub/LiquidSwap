@@ -1,7 +1,8 @@
 import SwiftUI
 
-// ✅ REMOVED: @available(iOS 17.0, *) - Now works on iOS 16.6+
 struct FeedView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    
     // MARK: - Dependencies
     @ObservedObject var feedManager = FeedManager.shared
     @ObservedObject var tradeManager = TradeManager.shared
@@ -12,10 +13,7 @@ struct FeedView: View {
     // MARK: - State: Navigation
     @State private var selectedDetailItem: TradeItem?
     @State private var itemForQuickOffer: TradeItem?
-    
-    // 🛠️ FIX: Use a wrapper struct for the sheet state
     @State private var selectedProfileSheet: ProfileSheetWrapper?
-    
     @State private var showProgressionView = false
     
     // MARK: - State: Animations
@@ -23,8 +21,6 @@ struct FeedView: View {
     @State private var heartScale: CGFloat = 0.5
     @State private var heartRotation: Double = 0
     @State private var dragOffsetY: CGFloat = 0
-    
-    // ✅ iOS 16.6 FIX: State for empty view pulse animation
     @State private var emptyStatePulse = false
     
     // MARK: - State: Gamification (XP & Combo)
@@ -38,13 +34,22 @@ struct FeedView: View {
     @State private var previousLevel: Int = 1
     @State private var showConfetti = false
     
+    // MARK: - Adaptive Colors
+    private var primaryText: Color {
+        colorScheme == .dark ? .white : .black
+    }
+    
+    private var secondaryText: Color {
+        colorScheme == .dark ? .white.opacity(0.7) : .black.opacity(0.6)
+    }
+    
     // MARK: - Computed Props
     var currentItem: TradeItem? {
         feedManager.items.last
     }
     
     var bottomBarPadding: CGFloat {
-        tabManager.isVisible ? 95 : 20
+        tabManager.isVisible ? 90 : 16
     }
     
     // MARK: - Body
@@ -57,7 +62,7 @@ struct FeedView: View {
                 // 2. Main Content
                 if feedManager.isLoading && feedManager.items.isEmpty {
                     ProgressView()
-                        .tint(.white)
+                        .tint(primaryText)
                         .scaleEffect(1.5)
                 } else if feedManager.items.isEmpty {
                     emptyStateView
@@ -70,7 +75,7 @@ struct FeedView: View {
                     progressionHeader
                     Spacer()
                 }
-                .zIndex(10) // ✅ FIX: Bring header above card stack
+                .zIndex(10)
                 
                 // 4. Interaction Feedback Layers
                 if showHeartOverlay {
@@ -122,7 +127,6 @@ struct FeedView: View {
                 previousLevel = userManager.currentLevel.tier
                 showRandomAchievementHint()
             }
-            // ✅ iOS 16.6 FIX: Use single-parameter .onChange syntax
             .onChange(of: userManager.currentLevel.tier) { newValue in
                 if newValue > previousLevel { triggerBigCelebration() }
                 previousLevel = newValue
@@ -137,7 +141,6 @@ struct FeedView: View {
                 QuickOfferSheet(wantedItem: item)
                     .presentationDetents([.medium, .large])
             }
-            // 🛠️ FIX: Update sheet to use the wrapper
             .sheet(item: $selectedProfileSheet) { wrapper in
                 NavigationStack { PublicProfileView(userId: wrapper.id) }
                     .presentationDetents([.large])
@@ -170,9 +173,9 @@ struct FeedView: View {
     
     private var heartAnimationLayer: some View {
         Image(systemName: "heart.fill")
-            .font(.system(size: 100))
+            .font(.system(size: 90))
             .foregroundStyle(LinearGradient(colors: [.pink, .red], startPoint: .topLeading, endPoint: .bottomTrailing))
-            .shadow(color: .red.opacity(0.5), radius: 20)
+            .shadow(color: .red.opacity(0.5), radius: 18)
             .scaleEffect(heartScale)
             .rotationEffect(.degrees(heartRotation))
             .transition(.scale.combined(with: .opacity))
@@ -185,7 +188,7 @@ struct FeedView: View {
             ComboIndicator(count: comboCount)
                 .scaleEffect(comboScale)
                 .rotationEffect(.degrees(Double.random(in: -3...3)))
-                .padding(.bottom, 220)
+                .padding(.bottom, 200)
                 .id("combo-\(comboCount)")
         }
         .transition(.scale.combined(with: .opacity))
@@ -198,8 +201,8 @@ struct FeedView: View {
             
             if showAchievementHint, let hintType = achievementHintType {
                 AchievementHintBanner(type: hintType, progress: progressionManager.progress(for: hintType))
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 8)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             
@@ -210,7 +213,7 @@ struct FeedView: View {
                     awardXP(amount: 15, reason: "Offer Started")
                 }
             )
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 12)
             .padding(.bottom, bottomBarPadding)
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: tabManager.isVisible)
         }
@@ -223,10 +226,11 @@ struct FeedView: View {
             Text(error)
                 .font(.caption.bold())
                 .foregroundStyle(.white)
-                .padding()
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
                 .background(Color.red.opacity(0.8))
-                .cornerRadius(10)
-                .padding(.bottom, 120)
+                .cornerRadius(8)
+                .padding(.bottom, 110)
         }
         .transition(.move(edge: .bottom))
         .onAppear {
@@ -237,11 +241,11 @@ struct FeedView: View {
     }
     
     private var progressionHeader: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Text("swappr.")
-                .font(.system(size: 28, weight: .heavy, design: .default))
-                .foregroundStyle(.white)
-                .shadow(color: .cyan.opacity(0.3), radius: 5)
+                .font(.system(size: 24, weight: .heavy, design: .default))
+                .foregroundStyle(primaryText)
+                .shadow(color: .cyan.opacity(0.3), radius: 4)
             
             Spacer()
             
@@ -249,45 +253,44 @@ struct FeedView: View {
                 Haptics.shared.playLight()
                 showProgressionView = true
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     if userManager.currentStreak > 0 {
                         HStack(spacing: 2) {
                             Image(systemName: "flame.fill").foregroundStyle(.orange)
                             Text("\(userManager.currentStreak)")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundStyle(.white)
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(primaryText)
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
                         .background(Color.orange.opacity(0.2))
                         .clipShape(Capsule())
                     }
                     
                     ZStack {
                         Circle()
-                            .stroke(Color.white.opacity(0.2), lineWidth: 3)
-                            .frame(width: 36, height: 36)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 2.5)
+                            .frame(width: 32, height: 32)
                         Circle()
                             .trim(from: 0, to: userManager.levelProgress)
-                            .stroke(userManager.currentLevel.color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            .stroke(userManager.currentLevel.color, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                             .rotationEffect(.degrees(-90))
-                            .frame(width: 36, height: 36)
+                            .frame(width: 32, height: 32)
                         Text("\(userManager.currentLevel.tier)")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.white)
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(primaryText)
                     }
                 }
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 60)
+        .padding(.horizontal, 12)
+        .padding(.top, 56)
     }
     
-    // ✅ iOS 16.6 FIX: Custom pulse animation instead of .symbolEffect
     private var emptyStateView: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 16) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 80))
+                .font(.system(size: 70))
                 .foregroundStyle(.cyan)
                 .scaleEffect(emptyStatePulse ? 1.1 : 1.0)
                 .opacity(emptyStatePulse ? 1.0 : 0.8)
@@ -300,12 +303,12 @@ struct FeedView: View {
                 }
             
             Text("All Caught Up!")
-                .font(.title2).bold()
-                .foregroundStyle(.white)
+                .font(.title3).bold()
+                .foregroundStyle(primaryText)
             
             Text("You've viewed all nearby items.")
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(secondaryText)
             
             Button("Refresh Feed") {
                 Haptics.shared.playMedium()
@@ -418,7 +421,6 @@ struct FeedView: View {
     
     private func openOwnerProfile(item: TradeItem) {
         Haptics.shared.playMedium()
-        // 🛠️ FIX: Wrap the ID
         selectedProfileSheet = ProfileSheetWrapper(id: item.ownerId)
         awardXP(amount: 5, reason: "Scouting")
     }
@@ -463,7 +465,7 @@ struct FeedView: View {
     }
 }
 
-// 🛠️ FIX: Helper Struct for Identifiable UUID
+// Helper Struct for Identifiable UUID
 struct ProfileSheetWrapper: Identifiable {
     let id: UUID
 }
