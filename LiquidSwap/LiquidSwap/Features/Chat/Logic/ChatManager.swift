@@ -13,6 +13,10 @@ class ChatManager: ObservableObject {
     // Connection Status
     @Published var isConnected = false
     
+    // MARK: - ✨ Message Validation State (Issue #7 Fix)
+    @Published var lastMessageError: String?
+    @Published var showMessageError = false
+    
     private var channel: RealtimeChannelV2?
     private var isSetup = false
     
@@ -53,17 +57,68 @@ class ChatManager: ObservableObject {
         await subscribeToRealtime(userId: userId)
     }
     
+    // MARK: - ✨ Message Send Result (Issue #7 Fix)
+    
+    enum SendResult {
+        case success
+        case rateLimited(message: String)
+        case blocked(reason: String)
+        case invalid(reason: String)
+        case error(String)
+    }
+    
     // MARK: - Actions
     
+    /// Sends a message with full validation and sanitization
+    /// - Returns: SendResult indicating success or failure reason
     @MainActor
-    func sendMessage(_ text: String, to receiverId: UUID, tradeId: UUID? = nil, imageUrl: String? = nil) async {
-        guard let myId = currentUserId else { return }
+    func sendMessageWithResult(_ text: String, to receiverId: UUID, tradeId: UUID? = nil, imageUrl: String? = nil) async -> SendResult {
+        guard let myId = currentUserId else {
+            return .error("Not logged in")
+        }
+        
+        // ✨ Issue #7: Skip sanitization for system messages and image placeholders
+        let isSystemMessage = text.hasPrefix("ACTION:")
+        let isImageMessage = imageUrl != nil
+        
+        var sanitizedContent = text
+        
+        if !isSystemMessage && !isImageMessage {
+            // ✨ Issue #3: Rate limit check for messages
+            let (allowed, rateLimitMsg) = await RateLimiter.canSendMessage()
+            if !allowed {
+                return .rateLimited(message: rateLimitMsg ?? "Too many messages")
+            }
+            
+            // ✨ Issue #7: Sanitize message content
+            let sanitizeResult = MessageSanitizer.sanitize(text)
+            
+            switch sanitizeResult {
+            case .valid(let sanitized):
+                sanitizedContent = sanitized
+                
+            case .tooLong(let maxAllowed):
+                return .invalid(reason: "Message too long. Maximum \(maxAllowed) characters allowed.")
+                
+            case .tooShort:
+                return .invalid(reason: "Message too short.")
+                
+            case .empty:
+                return .invalid(reason: "Message cannot be empty.")
+                
+            case .blocked(let reason):
+                return .blocked(reason: reason)
+                
+            case .invalid(let reason):
+                return .invalid(reason: reason)
+            }
+        }
         
         let newMessage = Message(
             id: UUID(),
             senderId: myId,
             receiverId: receiverId,
-            content: text,
+            content: sanitizedContent,
             createdAt: Date(),
             imageUrl: imageUrl,
             tradeId: tradeId
@@ -74,15 +129,44 @@ class ChatManager: ObservableObject {
         
         do {
             try await client.from("messages").insert(newMessage).execute()
+            return .success
         } catch {
             print("❌ Failed to send message: \(error)")
-            // Optional: Mark message as failed in UI
+            return .error(error.localizedDescription)
+        }
+    }
+    
+    /// Legacy wrapper - maintains backwards compatibility
+    @MainActor
+    func sendMessage(_ text: String, to receiverId: UUID, tradeId: UUID? = nil, imageUrl: String? = nil) async {
+        let result = await sendMessageWithResult(text, to: receiverId, tradeId: tradeId, imageUrl: imageUrl)
+        
+        switch result {
+        case .success:
+            break // All good
+        case .rateLimited(let message):
+            print("⚠️ Message rate limited: \(message)")
+            self.lastMessageError = message
+            self.showMessageError = true
+        case .blocked(let reason):
+            print("🚫 Message blocked: \(reason)")
+            self.lastMessageError = reason
+            self.showMessageError = true
+        case .invalid(let reason):
+            print("❌ Message invalid: \(reason)")
+            self.lastMessageError = reason
+            self.showMessageError = true
+        case .error(let msg):
+            print("❌ Message error: \(msg)")
+            self.lastMessageError = msg
+            self.showMessageError = true
         }
     }
     
     @MainActor
     func sendSystemMessage(_ actionType: String, to receiverId: UUID, tradeId: UUID) async {
         // System actions are special codes handled by the UI
+        // These bypass sanitization (they're internal codes)
         let content = "ACTION:\(actionType)"
         await sendMessage(content, to: receiverId, tradeId: tradeId)
     }
@@ -90,6 +174,15 @@ class ChatManager: ObservableObject {
     @MainActor
     func sendImage(data: Data, to receiverId: UUID, tradeId: UUID) async {
         guard let myId = currentUserId else { return }
+        
+        // ✨ Issue #3: Rate limit check for images (uses message limit)
+        let (allowed, rateLimitMsg) = await RateLimiter.canSendMessage()
+        if !allowed {
+            self.lastMessageError = rateLimitMsg
+            self.showMessageError = true
+            print("⚠️ Image rate limited: \(rateLimitMsg ?? "unknown")")
+            return
+        }
         
         do {
             // 📉 COST OPTIMIZATION: Compression should happen before calling this
@@ -158,7 +251,24 @@ class ChatManager: ObservableObject {
                 .execute()
                 .value
             
-            self.conversations[tradeId] = messages
+            // ✨ Issue #7: Sanitize messages for display (in case old messages weren't sanitized)
+            let sanitizedMessages = messages.map { message -> Message in
+                var sanitized = message
+                if !message.content.hasPrefix("ACTION:") {
+                    sanitized = Message(
+                        id: message.id,
+                        senderId: message.senderId,
+                        receiverId: message.receiverId,
+                        content: MessageSanitizer.sanitizeForDisplay(message.content),
+                        createdAt: message.createdAt,
+                        imageUrl: message.imageUrl,
+                        tradeId: message.tradeId
+                    )
+                }
+                return sanitized
+            }
+            
+            self.conversations[tradeId] = sanitizedMessages
         } catch {
             print("❌ Error loading chat room: \(error)")
         }
@@ -199,14 +309,33 @@ class ChatManager: ObservableObject {
                     case .insert(let insertAction):
                         do {
                             let data = try JSONEncoder().encode(insertAction.record)
-                            let message = try JSONDecoder().decode(Message.self, from: data)
+                            var message = try JSONDecoder().decode(Message.self, from: data)
+                            
+                            // ✨ Issue #7: Sanitize incoming messages for display
+                            if !message.content.hasPrefix("ACTION:") {
+                                message = Message(
+                                    id: message.id,
+                                    senderId: message.senderId,
+                                    receiverId: message.receiverId,
+                                    content: MessageSanitizer.sanitizeForDisplay(message.content),
+                                    createdAt: message.createdAt,
+                                    imageUrl: message.imageUrl,
+                                    tradeId: message.tradeId
+                                )
+                            }
+                            
                             self.appendMessage(message)
                             
                             // Trigger Local Notification if backgrounded
                             if message.senderId != myId {
+                                // ✨ Truncate notification body for security
+                                let notificationBody = message.content.hasPrefix("ACTION:")
+                                    ? "New Update on your trade"
+                                    : String(message.content.prefix(100))
+                                
                                 NotificationManager.shared.sendLocalNotification(
                                     title: "New Message",
-                                    body: message.content.hasPrefix("ACTION:") ? "New Update on your trade" : "You have a new message"
+                                    body: notificationBody
                                 )
                             }
                         } catch {

@@ -37,13 +37,13 @@ struct CounterOfferSheet: View {
             // Exclude the CURRENT trade being negotiated from "Busy" check
             if trade.id == originalTrade.id { continue }
             
-            // Case 1: I sent the offer
-            if trade.senderId == myId && ["pending", "accepted"].contains(trade.status) {
+            // Case 1: I sent the offer (✨ Issue #10: Use enum)
+            if trade.senderId == myId && trade.status.isCommitted {
                 ids.insert(trade.offeredItemId)
                 trade.additionalOfferedItemIds.forEach { ids.insert($0) }
             }
-            // Case 2: I accepted an offer
-            if trade.receiverId == myId && trade.status == "accepted" {
+            // Case 2: I accepted an offer (✨ Issue #10: Use enum)
+            if trade.receiverId == myId && trade.status == .accepted {
                 ids.insert(trade.wantedItemId)
                 trade.additionalWantedItemIds.forEach { ids.insert($0) }
             }
@@ -252,7 +252,8 @@ struct CounterOfferSheet: View {
         let theirSelectedItems = theirItems.filter { selectedTheirIds.contains($0.id) }
         
         Task {
-            try? await DatabaseService.shared.updateTradeStatus(tradeId: originalTrade.id, status: "countered")
+            // ✨ Issue #10: Use enum rawValue
+            try? await DatabaseService.shared.updateTradeStatus(tradeId: originalTrade.id, status: TradeStatus.countered.rawValue)
             
             let success = await TradeManager.shared.sendMultiItemOffer(
                 wantedItems: theirSelectedItems,

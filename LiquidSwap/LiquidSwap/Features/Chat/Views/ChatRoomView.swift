@@ -25,6 +25,12 @@ struct ChatRoomView: View {
     @State private var showDealDashboard = true
     @State private var showSafeMap = false
     
+    // MARK: - ✨ Two-Phase Completion State (Issue #2 Fix)
+    @State private var currentTrade: TradeOffer?
+    @State private var userHasConfirmed = false
+    @State private var partnerHasConfirmed = false
+    @State private var showCompletionStatusBanner = false
+    
     // MARK: - Celebration State
     @State private var showCompletionCelebration = false
     
@@ -53,6 +59,16 @@ struct ChatRoomView: View {
     
     var messages: [Message] {
         return chatManager.conversations[trade.id] ?? []
+    }
+    
+    /// The trade to display (uses refreshed version if available)
+    var activeTrade: TradeOffer {
+        return currentTrade ?? trade
+    }
+    
+    /// Check if completion button should be enabled
+    var canRequestCompletion: Bool {
+        return activeTrade.status == .accepted && !userHasConfirmed && !isCompletingTrade
     }
     
     // MARK: - Body
@@ -92,10 +108,10 @@ struct ChatRoomView: View {
             CameraPicker(selectedImage: $selectedCameraImage).ignoresSafeArea()
         }
         .sheet(isPresented: $showRatingSheet) {
-            RateUserView(targetUserId: partnerId, targetUsername: partnerName)
+            RateUserView(targetUserId: partnerId, targetUsername: partnerName, tradeId: trade.id)
         }
         .sheet(isPresented: $showCounterSheet) {
-            CounterOfferSheet(originalTrade: trade)
+            CounterOfferSheet(originalTrade: activeTrade)
                 .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showSafeMap) {
@@ -131,8 +147,15 @@ struct ChatRoomView: View {
             customHeader
                 .zIndex(100)
             
+            // ✨ Completion Status Banner (Shows when waiting for partner)
+            if showCompletionStatusBanner && activeTrade.status == .accepted {
+                completionStatusBanner
+                    .zIndex(95)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            
             DealDashboard(
-                trade: trade,
+                trade: activeTrade,
                 isExpanded: $showDealDashboard,
                 currentUserId: myId,
                 onCounter: { showCounterSheet = true }
@@ -145,6 +168,102 @@ struct ChatRoomView: View {
                     withAnimation { showAttachmentOptions = false }
                 }
         }
+    }
+    
+    // MARK: - ✨ Completion Status Banner
+    
+    var completionStatusBanner: some View {
+        HStack(spacing: 12) {
+            // Status Icon
+            ZStack {
+                Circle()
+                    .fill(bannerColor.opacity(0.2))
+                    .frame(width: 36, height: 36)
+                
+                if userHasConfirmed && partnerHasConfirmed {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundStyle(.green)
+                } else if userHasConfirmed {
+                    Image(systemName: "hourglass")
+                        .foregroundStyle(.orange)
+                } else if partnerHasConfirmed {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundStyle(.cyan)
+                } else {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+            }
+            
+            // Status Text
+            VStack(alignment: .leading, spacing: 2) {
+                Text(bannerTitle)
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.white)
+                
+                Text(bannerSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            
+            Spacer()
+            
+            // Action Button (if partner confirmed but user hasn't)
+            if partnerHasConfirmed && !userHasConfirmed {
+                Button(action: { confirmMyCompletion() }) {
+                    Text("Confirm")
+                        .font(.caption.bold())
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.cyan)
+                        .clipShape(Capsule())
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(bannerColor.opacity(0.15))
+        .background(.ultraThinMaterial)
+        .overlay(
+            Rectangle()
+                .frame(height: 1)
+                .foregroundStyle(bannerColor.opacity(0.3)),
+            alignment: .bottom
+        )
+    }
+    
+    var bannerColor: Color {
+        if userHasConfirmed && partnerHasConfirmed {
+            return .green
+        } else if partnerHasConfirmed && !userHasConfirmed {
+            return .cyan
+        } else if userHasConfirmed {
+            return .orange
+        }
+        return .white
+    }
+    
+    var bannerTitle: String {
+        if userHasConfirmed && partnerHasConfirmed {
+            return "Trade Complete!"
+        } else if partnerHasConfirmed && !userHasConfirmed {
+            return "Partner Confirmed"
+        } else if userHasConfirmed {
+            return "Waiting for Partner"
+        }
+        return "Ready to Complete"
+    }
+    
+    var bannerSubtitle: String {
+        if userHasConfirmed && partnerHasConfirmed {
+            return "Both parties have confirmed the exchange"
+        } else if partnerHasConfirmed && !userHasConfirmed {
+            return "Tap Confirm when you've received your item"
+        } else if userHasConfirmed {
+            return "Your partner needs to confirm the exchange"
+        }
+        return "Both parties must confirm to complete"
     }
     
     var inputSection: some View {
@@ -170,8 +289,8 @@ struct ChatRoomView: View {
     
     var safeMapSheet: some View {
         let userLoc = LocationManager.shared.userLocation?.coordinate
-        let start = getCoordinate(for: trade.offeredItem) ?? userLoc ?? CLLocationCoordinate2D(latitude: 43.6532, longitude: -79.3832)
-        let end = getCoordinate(for: trade.wantedItem) ?? userLoc ?? CLLocationCoordinate2D(latitude: 43.6532, longitude: -79.3832)
+        let start = getCoordinate(for: activeTrade.offeredItem) ?? userLoc ?? CLLocationCoordinate2D(latitude: 43.6532, longitude: -79.3832)
+        let end = getCoordinate(for: activeTrade.wantedItem) ?? userLoc ?? CLLocationCoordinate2D(latitude: 43.6532, longitude: -79.3832)
         
         return SafeMeetingPointView(
             locationA: start,
@@ -210,23 +329,9 @@ struct ChatRoomView: View {
             Spacer()
             
             HStack(spacing: 12) {
-                if trade.status == "accepted" {
-                    Button {
-                        sendCompletionRequest()
-                    } label: {
-                        if isCompletingTrade {
-                            ProgressView().tint(.cyan)
-                        } else {
-                            Image(systemName: "checkmark.seal.fill")
-                                .font(.system(size: 20))
-                                .foregroundStyle(.cyan)
-                                .frame(width: 44, height: 44)
-                                .background(Color.cyan.opacity(0.1))
-                                .clipShape(Circle())
-                                .overlay(Circle().stroke(Color.cyan.opacity(0.3), lineWidth: 1))
-                        }
-                    }
-                    .disabled(isCompletingTrade)
+                // ✨ Updated Completion Button with Two-Phase States
+                if activeTrade.status == .accepted {
+                    completionButton
                 }
                 
                 Menu {
@@ -252,6 +357,48 @@ struct ChatRoomView: View {
         .background(.ultraThinMaterial)
         .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.white.opacity(0.1)), alignment: .bottom)
         .shadow(color: .black.opacity(0.1), radius: 5, y: 5)
+    }
+    
+    // MARK: - ✨ Completion Button (Two-Phase)
+    
+    var completionButton: some View {
+        Button {
+            confirmMyCompletion()
+        } label: {
+            ZStack {
+                if isCompletingTrade {
+                    ProgressView().tint(.cyan)
+                } else if userHasConfirmed {
+                    // Already confirmed - show waiting state
+                    Image(systemName: "hourglass")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.orange)
+                        .frame(width: 44, height: 44)
+                        .background(Color.orange.opacity(0.1))
+                        .clipShape(Circle())
+                        .overlay(Circle().stroke(Color.orange.opacity(0.3), lineWidth: 1))
+                } else if partnerHasConfirmed {
+                    // Partner waiting - highlight to confirm
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.cyan)
+                        .clipShape(Circle())
+                        .shadow(color: .cyan.opacity(0.5), radius: 8)
+                } else {
+                    // Default state - ready to confirm
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.cyan)
+                        .frame(width: 44, height: 44)
+                        .background(Color.cyan.opacity(0.1))
+                        .clipShape(Circle())
+                        .overlay(Circle().stroke(Color.cyan.opacity(0.3), lineWidth: 1))
+                }
+            }
+        }
+        .disabled(isCompletingTrade || userHasConfirmed)
     }
     
     // MARK: - Message List Section
@@ -280,10 +427,13 @@ struct ChatRoomView: View {
                         Section(header: DateHeader(date: section.date)) {
                             ForEach(section.messages, id: \.id) { message in
                                 if message.content.hasPrefix("ACTION:") {
-                                    TradeActionBubble(
+                                    // ✨ Updated to use new two-phase action bubble
+                                    TwoPhaseActionBubble(
                                         message: message,
                                         isMine: message.senderId == myId,
-                                        onConfirm: { confirmTradeCompletion() }
+                                        userConfirmed: userHasConfirmed,
+                                        partnerConfirmed: partnerHasConfirmed,
+                                        onConfirm: { confirmMyCompletion() }
                                     )
                                     .id(message.id)
                                     .padding(.bottom, 12)
@@ -347,8 +497,105 @@ struct ChatRoomView: View {
     func setupView() {
         TabBarManager.shared.hide()
         fetchPartnerProfile()
+        
+        // Initialize with passed trade
+        currentTrade = trade
+        
         Task {
             await chatManager.loadChat(tradeId: trade.id)
+            await refreshCompletionStatus()
+        }
+    }
+    
+    // MARK: - ✨ Two-Phase Completion Logic
+    
+    /// Refreshes the trade and completion status from the database
+    func refreshCompletionStatus() async {
+        guard let myId = myId else { return }
+        
+        // Fetch fresh trade data
+        if let freshTrade = await tradeManager.fetchTrade(id: trade.id) {
+            await MainActor.run {
+                self.currentTrade = freshTrade
+                
+                // Update confirmation states
+                let isSender = freshTrade.senderId == myId
+                self.userHasConfirmed = isSender ? freshTrade.senderConfirmedCompletion : freshTrade.receiverConfirmedCompletion
+                self.partnerHasConfirmed = isSender ? freshTrade.receiverConfirmedCompletion : freshTrade.senderConfirmedCompletion
+                
+                // Show banner if trade is accepted and any confirmation exists
+                withAnimation {
+                    self.showCompletionStatusBanner = freshTrade.status == .accepted && (userHasConfirmed || partnerHasConfirmed)
+                }
+                
+                // Check if trade just completed
+                if freshTrade.status == .completed && !showCompletionCelebration && !showRatingSheet {
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.7)) {
+                        showCompletionCelebration = true
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Confirms completion for the current user
+    func confirmMyCompletion() {
+        guard !isCompletingTrade && !userHasConfirmed else { return }
+        
+        isCompletingTrade = true
+        Haptics.shared.playMedium()
+        
+        Task {
+            let result = await tradeManager.confirmCompletion(tradeId: trade.id)
+            
+            await MainActor.run {
+                isCompletingTrade = false
+                
+                switch result {
+                case .tradeCompleted:
+                    // Both confirmed! Show celebration
+                    Haptics.shared.playSuccess()
+                    userHasConfirmed = true
+                    partnerHasConfirmed = true
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.7)) {
+                        showCompletionCelebration = true
+                    }
+                    
+                case .confirmed:
+                    // User confirmed, waiting for partner
+                    Haptics.shared.playLight()
+                    userHasConfirmed = true
+                    withAnimation {
+                        showCompletionStatusBanner = true
+                    }
+                    // Send system message to notify partner
+                    Task {
+                        await chatManager.sendSystemMessage("COMPLETE_REQUEST", to: partnerId, tradeId: trade.id)
+                    }
+                    
+                case .alreadyConfirmed:
+                    // Already confirmed
+                    userHasConfirmed = true
+                    
+                case .tradeNotAccepted:
+                    Haptics.shared.playError()
+                    
+                case .notParticipant:
+                    Haptics.shared.playError()
+                    
+                case .blocked:
+                    // ✨ Issue #4: Handle blocked user scenario
+                    Haptics.shared.playError()
+                    print("🚫 Cannot complete - blocked user relationship")
+                    
+                case .error(let message):
+                    print("❌ Completion error: \(message)")
+                    Haptics.shared.playError()
+                }
+            }
+            
+            // Refresh to get latest state
+            await refreshCompletionStatus()
         }
     }
     
@@ -361,29 +608,6 @@ struct ChatRoomView: View {
         let text = newMessageText
         newMessageText = ""
         Task { await chatManager.sendMessage(text, to: partnerId, tradeId: trade.id) }
-    }
-    
-    func sendCompletionRequest() {
-        Haptics.shared.playMedium()
-        Task {
-            await chatManager.sendSystemMessage("COMPLETE_REQUEST", to: partnerId, tradeId: trade.id)
-        }
-    }
-    
-    func confirmTradeCompletion() {
-        Haptics.shared.playSuccess()
-        Task {
-            let success = await TradeManager.shared.completeTrade(with: partnerId)
-            if success {
-                await MainActor.run {
-                    withAnimation(.spring(response: 0.6, dampingFraction: 0.7)) {
-                        showCompletionCelebration = true
-                    }
-                }
-            } else {
-                Haptics.shared.playError()
-            }
-        }
     }
     
     func fetchPartnerProfile() {
@@ -463,7 +687,7 @@ struct ChatSheetModifier: ViewModifier {
     }
 }
 
-// MARK: - UI COMPONENTS (ALL INCLUDED)
+// MARK: - UI COMPONENTS
 
 // 1. DATE HEADER
 struct DateHeader: View {
@@ -576,7 +800,6 @@ struct DealDashboard: View {
                                 }
                                 .padding(.horizontal, 8)
                             }
-                            // Force RTL layout
                             .flipsForRightToLeftLayoutDirection(true)
                             .environment(\.layoutDirection, .rightToLeft)
                         }
@@ -585,7 +808,7 @@ struct DealDashboard: View {
                     .padding(.vertical, 16)
                     
                     // Status / Actions
-                    if trade.status == "pending" {
+                    if trade.status == .pending {
                         if trade.receiverId == currentUserId {
                             Button(action: onCounter) {
                                 Text("Propose Counter Offer")
@@ -605,8 +828,7 @@ struct DealDashboard: View {
                                 .padding(.bottom, 12)
                         }
                     } else {
-                        // Just status text
-                        Text(trade.status.uppercased())
+                        Text(trade.status.displayName.uppercased())
                             .font(.caption.bold())
                             .foregroundStyle(.white.opacity(0.6))
                             .padding(.bottom, 12)
@@ -686,7 +908,7 @@ struct ChatInputBar: View {
                             }
                         }
                     } else {
-                        Button(action: onPhotoTap) { // Triggers paywall via logic in parent
+                        Button(action: onPhotoTap) {
                             VStack(spacing: 4) {
                                 ZStack {
                                     Circle().fill(Color.purple.opacity(0.2)).frame(width: 44, height: 44)
@@ -756,7 +978,7 @@ struct MessageBubble: View {
             VStack(alignment: isCurrentUser ? .trailing : .leading, spacing: 4) {
                 // Image
                 if let imageUrl = message.imageUrl {
-                    AsyncImageView(filename: imageUrl) // ✨ Cached Image
+                    AsyncImageView(filename: imageUrl)
                         .scaledToFill()
                         .frame(width: 220, height: 220)
                         .clipShape(RoundedRectangle(cornerRadius: 18))
@@ -815,6 +1037,157 @@ struct MessageBubble: View {
     }
 }
 
+// MARK: - ✨ Two-Phase Action Bubble
+
+struct TwoPhaseActionBubble: View {
+    let message: Message
+    let isMine: Bool
+    let userConfirmed: Bool
+    let partnerConfirmed: Bool
+    let onConfirm: () -> Void
+    
+    var body: some View {
+        HStack {
+            if isMine { Spacer() }
+            
+            VStack(spacing: 12) {
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(iconGradient)
+                        .frame(width: 44, height: 44)
+                    Image(systemName: iconName)
+                        .font(.system(size: 20))
+                        .foregroundStyle(.white)
+                }
+                .shadow(color: iconShadowColor, radius: 10)
+                
+                // Status Text
+                Text(statusTitle)
+                    .font(.system(size: 14, weight: .bold))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white)
+                
+                Text(statusSubtitle)
+                    .font(.caption)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.white.opacity(0.6))
+                
+                // Action Button
+                if showConfirmButton {
+                    Button(action: onConfirm) {
+                        Text("Confirm Completion")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .background(Color.cyan)
+                            .clipShape(Capsule())
+                    }
+                } else if userConfirmed && !partnerConfirmed {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                            .tint(.orange)
+                        Text("Waiting for partner...")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                } else if userConfirmed && partnerConfirmed {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Trade completed!")
+                            .font(.caption.bold())
+                            .foregroundStyle(.green)
+                    }
+                }
+            }
+            .padding(20)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24)
+                    .stroke(borderGradient, lineWidth: 1)
+            )
+            .padding(.horizontal, 40)
+            
+            if !isMine { Spacer() }
+        }
+        .padding(.vertical, 8)
+    }
+    
+    var iconGradient: LinearGradient {
+        if userConfirmed && partnerConfirmed {
+            return LinearGradient(colors: [.green, .mint], startPoint: .topLeading, endPoint: .bottomTrailing)
+        } else if partnerConfirmed && !userConfirmed {
+            return LinearGradient(colors: [.cyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+        } else if userConfirmed {
+            return LinearGradient(colors: [.orange, .yellow], startPoint: .topLeading, endPoint: .bottomTrailing)
+        }
+        return LinearGradient(colors: [.cyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    
+    var iconName: String {
+        if userConfirmed && partnerConfirmed {
+            return "checkmark.seal.fill"
+        } else if userConfirmed {
+            return "hourglass"
+        }
+        return "checkmark.seal.fill"
+    }
+    
+    var iconShadowColor: Color {
+        if userConfirmed && partnerConfirmed {
+            return .green.opacity(0.5)
+        } else if userConfirmed {
+            return .orange.opacity(0.5)
+        }
+        return .cyan.opacity(0.5)
+    }
+    
+    var borderGradient: LinearGradient {
+        LinearGradient(
+            colors: [.white.opacity(0.4), .white.opacity(0.1)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+    
+    var statusTitle: String {
+        if userConfirmed && partnerConfirmed {
+            return "🎉 Trade Complete!"
+        } else if isMine {
+            if userConfirmed {
+                return "You confirmed completion"
+            }
+            return "You requested completion"
+        } else {
+            if partnerConfirmed {
+                return "Partner confirmed completion"
+            }
+            return "Partner wants to complete"
+        }
+    }
+    
+    var statusSubtitle: String {
+        if userConfirmed && partnerConfirmed {
+            return "Both parties have confirmed the exchange"
+        } else if userConfirmed && !partnerConfirmed {
+            return "Waiting for your partner to confirm"
+        } else if partnerConfirmed && !userConfirmed {
+            return "Confirm when you've received your item"
+        }
+        return "Both parties must confirm to complete"
+    }
+    
+    var showConfirmButton: Bool {
+        return !isMine && !userConfirmed
+    }
+}
+
+// MARK: - Trade Completion Overlay
+
 struct TradeCompletionOverlay: View {
     let onDismiss: () -> Void
     
@@ -864,6 +1237,8 @@ struct TradeCompletionOverlay: View {
         }
     }
 }
+
+// MARK: - Safe Meeting Point View
 
 struct SafeSpotItem: Identifiable {
     let id = UUID()
@@ -937,64 +1312,5 @@ struct SafeMeetingPointView: View {
             guard let response = response else { return }
             self.safeSpots = response.mapItems.prefix(5).map { SafeSpotItem(item: $0) }
         }
-    }
-}
-
-struct TradeActionBubble: View {
-    let message: Message
-    let isMine: Bool
-    let onConfirm: () -> Void
-    
-    var body: some View {
-        HStack {
-            if isMine { Spacer() }
-            
-            VStack(spacing: 12) {
-                // Icon
-                ZStack {
-                    Circle()
-                        .fill(LinearGradient(colors: [.cyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .frame(width: 44, height: 44)
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(.white)
-                }
-                .shadow(color: .cyan.opacity(0.5), radius: 10)
-                
-                // Text
-                Text(isMine ? "You requested to complete the trade." : "Partner wants to complete the trade.")
-                    .font(.system(size: 14, weight: .bold))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white)
-                
-                // Action Button (Only for receiver)
-                if !isMine {
-                    Button(action: onConfirm) {
-                        Text("Confirm Completion")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.black)
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 10)
-                            .background(Color.cyan)
-                            .clipShape(Capsule())
-                    }
-                } else {
-                    Text("Waiting for confirmation...")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.5))
-                }
-            }
-            .padding(20)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 24)
-                    .stroke(LinearGradient(colors: [.white.opacity(0.4), .white.opacity(0.1)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
-            )
-            .padding(.horizontal, 40)
-            
-            if !isMine { Spacer() }
-        }
-        .padding(.vertical, 8)
     }
 }

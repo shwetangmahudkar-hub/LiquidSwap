@@ -149,8 +149,8 @@ struct ChatsListView: View {
     // Logic: Does this trade need my attention?
     func requiresAction(_ trade: TradeOffer) -> Bool {
         guard let myId = userManager.currentUser?.id else { return false }
-        if trade.receiverId == myId && trade.status == "pending" { return true }
-        if trade.receiverId == myId && trade.status == "countered" { return true }
+        if trade.receiverId == myId && trade.status.rawValue == "pending" { return true }
+        if trade.receiverId == myId && trade.status.rawValue == "countered" { return true }
         return false
     }
     
@@ -300,7 +300,7 @@ struct GamifiedChatRow: View {
                             .fontWeight(requiresAction ? .semibold : .regular)
                             .lineLimit(1)
                     } else {
-                        StatusPillSmall(status: trade.status)
+                        StatusPillSmall(status: trade.status.rawValue)
                         
                         Text("•")
                             .foregroundStyle(tertiaryText)

@@ -33,14 +33,14 @@ struct MakeOfferView: View {
         var ids = Set<UUID>()
         
         for trade in tradeManager.activeTrades {
-            // Case 1: I sent the offer (Pending or Accepted)
-            if trade.senderId == myId && ["pending", "accepted"].contains(trade.status) {
+            // Case 1: I sent the offer (Pending or Accepted) - ✨ Issue #10: Use enum
+            if trade.senderId == myId && trade.status.isCommitted {
                 ids.insert(trade.offeredItemId)
                 trade.additionalOfferedItemIds.forEach { ids.insert($0) }
             }
             
-            // Case 2: I received an offer AND Accepted it
-            if trade.receiverId == myId && trade.status == "accepted" {
+            // Case 2: I received an offer AND Accepted it - ✨ Issue #10: Use enum
+            if trade.receiverId == myId && trade.status == .accepted {
                 ids.insert(trade.wantedItemId)
                 trade.additionalWantedItemIds.forEach { ids.insert($0) }
             }

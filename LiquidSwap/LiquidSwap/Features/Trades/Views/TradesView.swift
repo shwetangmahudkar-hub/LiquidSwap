@@ -43,7 +43,7 @@ struct TradesView: View {
     var sentOffers: [TradeOffer] {
         guard let myId = userManager.currentUser?.id else { return [] }
         return tradeManager.activeTrades.filter { trade in
-            trade.senderId == myId && trade.status == "pending"
+            trade.senderId == myId && trade.status == .pending  // ✨ Issue #10: Use enum
         }
     }
     
@@ -310,7 +310,7 @@ struct TradesView: View {
                 Haptics.shared.playSuccess()
                 
                 var acceptedTrade = offer
-                acceptedTrade.status = "accepted"
+                acceptedTrade.status = .accepted  // ✨ Issue #10: Use enum
                 
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 
@@ -332,7 +332,7 @@ struct TradesView: View {
     
     private func cancelSentOffer(_ offer: TradeOffer) {
         Task {
-            try? await DatabaseService.shared.updateTradeStatus(tradeId: offer.id, status: "cancelled")
+            try? await DatabaseService.shared.updateTradeStatus(tradeId: offer.id, status: TradeStatus.cancelled.rawValue)  // ✨ Issue #10: Use enum
             Haptics.shared.playMedium()
             await tradeManager.loadTradesData()
         }
@@ -349,51 +349,39 @@ struct GlassEmptyState: View {
     let subtitle: String
     
     private var primaryText: Color {
-        colorScheme == .dark ? .white.opacity(0.6) : .black.opacity(0.6)
+        colorScheme == .dark ? .white : .black
     }
     
     private var secondaryText: Color {
-        colorScheme == .dark ? .white.opacity(0.4) : .black.opacity(0.4)
-    }
-    
-    private var iconBackground: Color {
-        colorScheme == .dark ? .white.opacity(0.05) : .black.opacity(0.05)
+        colorScheme == .dark ? .white.opacity(0.5) : .black.opacity(0.5)
     }
     
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
             ZStack {
                 Circle()
-                    .fill(iconBackground)
-                    .frame(width: 70, height: 70)
-                
+                    .fill(Color.cyan.opacity(0.1))
+                    .frame(width: 80, height: 80)
                 Image(systemName: icon)
-                    .font(.system(size: 28))
-                    .foregroundStyle(secondaryText)
+                    .font(.system(size: 32))
+                    .foregroundStyle(.cyan.opacity(0.6))
             }
-            
-            VStack(spacing: 4) {
+            VStack(spacing: 6) {
                 Text(message)
                     .appFont(16, weight: .bold)
                     .foregroundStyle(primaryText)
-                
                 Text(subtitle)
                     .appFont(13)
                     .foregroundStyle(secondaryText)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 32)
-        .background(.ultraThinMaterial)
-        .cornerRadius(20)
-        .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.white.opacity(0.1), lineWidth: 1)
-        )
+        .padding(.vertical, 60)
     }
 }
+
+// MARK: - Offer Card
 
 struct OfferCard: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -413,62 +401,74 @@ struct OfferCard: View {
     }
     
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 14) {
             // Header
-            HStack {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(Color.cyan.opacity(0.2))
-                        .frame(width: 28, height: 28)
-                        .overlay(Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 12, weight: .bold)).foregroundStyle(.cyan))
-                    Text("Trade Offer")
-                        .appFont(13, weight: .bold)
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(Color.cyan.opacity(0.15))
+                    .frame(width: 36, height: 36)
+                    .overlay(Image(systemName: "arrow.down.circle.fill").font(.system(size: 16)).foregroundStyle(.cyan))
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("New Offer")
+                        .appFont(14, weight: .bold)
                         .foregroundStyle(primaryText)
+                    Text(timeAgoString(from: offer.createdAt))
+                        .appFont(11)
+                        .foregroundStyle(secondaryText)
                 }
+                
                 Spacer()
-                Text(timeAgoString(from: offer.createdAt))
-                    .appFont(10)
-                    .foregroundStyle(secondaryText)
+                
+                Button(action: onViewProfile) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "person.circle.fill")
+                            .font(.system(size: 14))
+                        Text("Profile")
+                            .appFont(11, weight: .bold)
+                    }
+                    .foregroundStyle(.cyan)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.cyan.opacity(0.15))
+                    .clipShape(Capsule())
+                }
             }
             
             // Items
             HStack(spacing: 10) {
                 itemVisual(item: offer.offeredItem, label: "THEY OFFER", borderColor: .cyan)
                 VStack(spacing: 4) {
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(secondaryText)
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(colorScheme == .dark ? .white.opacity(0.3) : .black.opacity(0.3))
                 }
-                itemVisual(item: offer.wantedItem, label: "FOR YOUR", borderColor: .purple)
+                itemVisual(item: offer.wantedItem, label: "FOR YOUR", borderColor: .orange)
             }
             
-            // Sender
-            Button(action: onViewProfile) {
-                HStack(spacing: 6) {
-                    Image(systemName: "person.circle.fill").font(.system(size: 12)).foregroundStyle(.cyan)
-                    Text("View Sender Profile").appFont(11, weight: .medium).foregroundStyle(.cyan)
-                    Spacer()
-                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(.cyan.opacity(0.6))
-                }
-                .padding(.horizontal, 10).padding(.vertical, 8)
-                .background(Color.cyan.opacity(0.1)).cornerRadius(10)
-            }
+            Divider().background(Color.white.opacity(0.1))
             
             // Actions
-            HStack(spacing: 10) {
-                Button(action: { handleResponse(accept: false) }) {
+            HStack(spacing: 12) {
+                Button(action: onCounter) {
                     HStack(spacing: 5) {
-                        Image(systemName: "xmark").font(.system(size: 12, weight: .bold))
-                        Text("Decline").appFont(13, weight: .bold)
+                        Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 12))
+                        Text("Counter").appFont(13, weight: .bold)
                     }
-                    .foregroundStyle(.red).frame(maxWidth: .infinity).padding(.vertical, 12)
-                    .background(Color.red.opacity(0.15)).cornerRadius(12)
+                    .foregroundStyle(.cyan).frame(maxWidth: .infinity).padding(.vertical, 12)
+                        .background(.ultraThinMaterial).cornerRadius(12)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.2), lineWidth: 1))
                 }
                 .disabled(isProcessing)
                 
-                Button(action: onCounter) {
-                    Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(primaryText).frame(width: 44).padding(.vertical, 12)
+                Button(action: { handleResponse(accept: false) }) {
+                    HStack(spacing: 5) {
+                        if isProcessing { ProgressView().tint(primaryText) } else {
+                            Image(systemName: "xmark").font(.system(size: 12, weight: .bold))
+                            Text("Decline").appFont(13, weight: .bold)
+                        }
+                    }
+                    .foregroundStyle(primaryText).frame(maxWidth: .infinity).padding(.vertical, 12)
                         .background(.ultraThinMaterial).cornerRadius(12)
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.white.opacity(0.2), lineWidth: 1))
                 }
@@ -547,7 +547,7 @@ struct SentOfferCard: View {
                         .foregroundStyle(primaryText)
                 }
                 Spacer()
-                Text("Pending")
+                Text(offer.status.displayName)  // ✨ Issue #10: Use enum displayName
                     .font(.caption2.bold())
                     .foregroundStyle(.orange)
                     .padding(.horizontal, 6).padding(.vertical, 3)

@@ -12,15 +12,25 @@ struct RateUserView: View {
     
     let targetUserId: UUID
     let targetUsername: String
+    let tradeId: UUID?  // ✨ Issue #8: Optional trade ID for verification
     
     @State private var rating = 5
     @State private var comment = ""
     @State private var selectedTags: Set<String> = []
     @State private var isSubmitting = false
     @State private var showSuccess = false
+    @State private var showError = false
+    @State private var errorMessage = ""
     
     // Quick Feedback Tags
     let availableTags = ["Punctual", "Friendly", "Item as Described", "Responsive", "Safe Meetup"]
+    
+    // ✨ Backwards compatible initializer
+    init(targetUserId: UUID, targetUsername: String, tradeId: UUID? = nil) {
+        self.targetUserId = targetUserId
+        self.targetUsername = targetUsername
+        self.tradeId = tradeId
+    }
     
     var body: some View {
         ZStack {
@@ -155,6 +165,11 @@ struct RateUserView: View {
         } message: {
             Text("Thanks for helping the community!")
         }
+        .alert("Cannot Submit Review", isPresented: $showError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(errorMessage)
+        }
     }
     
     // MARK: - Logic
@@ -175,34 +190,111 @@ struct RateUserView: View {
         // Combine tags and comment
         let finalComment = selectedTags.isEmpty ? comment : "[\(selectedTags.joined(separator: ", "))] \(comment)"
         
+        // ✨ Issue #7: Sanitize the comment
+        let sanitizedComment: String
+        switch MessageSanitizer.sanitize(finalComment, config: .init(
+            maxLength: 500,
+            minLength: 0,
+            allowLinks: false,
+            allowMarkdown: false,
+            stripInvisibleChars: true,
+            blockSpamPatterns: true
+        )) {
+        case .valid(let sanitized):
+            sanitizedComment = sanitized
+        case .empty:
+            sanitizedComment = ""
+        default:
+            sanitizedComment = finalComment.prefix(500).description
+        }
+        
         Task {
             do {
-                try await DatabaseService.shared.submitReview(
-                    reviewerId: myId,
-                    reviewedId: targetUserId,
-                    rating: rating,
-                    comment: finalComment
-                )
-                
-                // ✨ PROGRESSION TRIGGER: Check achievements after submitting review
-                await ProgressionManager.shared.onReviewSubmitted()
-                
-                // Refresh user data to update reviews given count
-                await UserManager.shared.loadUserData()
-                
-                await MainActor.run {
-                    Haptics.shared.playSuccess()
-                    showSuccess = true
-                    isSubmitting = false
+                // ✨ Issue #8: Use trade-verified submission
+                if let tradeId = tradeId {
+                    // New secure path - verify trade
+                    let result = try await DatabaseService.shared.submitReviewWithVerification(
+                        reviewerId: myId,
+                        reviewedId: targetUserId,
+                        tradeId: tradeId,
+                        rating: rating,
+                        comment: sanitizedComment
+                    )
+                    
+                    await MainActor.run {
+                        switch result {
+                        case .success:
+                            handleSuccess()
+                        case .noCompletedTrade:
+                            handleError("No completed trade found with this user.")
+                        case .alreadyReviewed:
+                            handleError("You've already reviewed this trade.")
+                        case .cannotReviewSelf:
+                            handleError("You cannot review yourself.")
+                        case .invalidRating:
+                            handleError("Invalid rating value.")
+                        case .error(let msg):
+                            handleError(msg)
+                        }
+                    }
+                } else {
+                    // Legacy path - try to find a completed trade automatically
+                    // This maintains backwards compatibility
+                    if let foundTradeId = try await DatabaseService.shared.findCompletedTrade(
+                        userId1: myId,
+                        userId2: targetUserId
+                    ) {
+                        let result = try await DatabaseService.shared.submitReviewWithVerification(
+                            reviewerId: myId,
+                            reviewedId: targetUserId,
+                            tradeId: foundTradeId,
+                            rating: rating,
+                            comment: sanitizedComment
+                        )
+                        
+                        await MainActor.run {
+                            switch result {
+                            case .success:
+                                handleSuccess()
+                            case .alreadyReviewed:
+                                handleError("You've already reviewed this trade.")
+                            default:
+                                handleError("Unable to submit review.")
+                            }
+                        }
+                    } else {
+                        await MainActor.run {
+                            handleError("You can only review users after completing a trade with them.")
+                        }
+                    }
                 }
+                
             } catch {
                 print("❌ Failed to submit review: \(error)")
                 await MainActor.run {
-                    Haptics.shared.playError()
-                    isSubmitting = false
+                    handleError("Failed to submit review. Please try again.")
                 }
             }
         }
+    }
+    
+    private func handleSuccess() {
+        // ✨ PROGRESSION TRIGGER: Check achievements after submitting review
+        Task {
+            await ProgressionManager.shared.onReviewSubmitted()
+            await UserManager.shared.loadUserData()
+        }
+        
+        Haptics.shared.playSuccess()
+        showSuccess = true
+        isSubmitting = false
+    }
+    
+    private func handleError(_ message: String) {
+        Haptics.shared.playError()
+        errorMessage = message
+        showError = true
+        isSubmitting = false
     }
 }
 

@@ -93,7 +93,7 @@ class DatabaseService {
         return try await client
             .from("items")
             .select()
-            .in("id", values: uniqueIds) // Fix: Renamed 'value' to 'values'
+            .in("id", values: uniqueIds)
             .execute()
             .value
     }
@@ -135,7 +135,7 @@ class DatabaseService {
         let profiles: [UserProfile] = try await client
             .from("profiles")
             .select()
-            .in("id", values: uniqueIds) // Fix: Renamed 'value' to 'values'
+            .in("id", values: uniqueIds)
             .execute()
             .value
         
@@ -218,7 +218,7 @@ class DatabaseService {
         let likes: [LikeEntry] = try await client
             .from("likes")
             .select()
-            .in("item_id", values: myItemIds) // Fix: Renamed 'value' to 'values'
+            .in("item_id", values: myItemIds)
             .order("created_at", ascending: false)
             .execute()
             .value
@@ -257,6 +257,8 @@ class DatabaseService {
         return events
     }
     
+    // MARK: - LIKES
+    
     func saveLike(userId: UUID, itemId: UUID) async throws {
         struct LikeData: Encodable {
             let user_id: UUID
@@ -281,7 +283,7 @@ class DatabaseService {
         return try await client
             .from("items")
             .select()
-            .in("id", values: ids) // Fix: Renamed 'value' to 'values'
+            .in("id", values: ids)
             .execute()
             .value
     }
@@ -335,17 +337,206 @@ class DatabaseService {
         try await client.from("reports").insert(data).execute()
     }
 
-    // MARK: - REVIEWS
+    // MARK: - ✨ REVIEWS (Issue #8 Security Fix)
     
-    func submitReview(reviewerId: UUID, reviewedId: UUID, rating: Int, comment: String) async throws {
+    /// Result type for review submission
+    enum ReviewResult {
+        case success
+        case noCompletedTrade
+        case alreadyReviewed
+        case cannotReviewSelf
+        case invalidRating
+        case error(String)
+    }
+    
+    /// Submits a review with full trade verification
+    /// - Parameters:
+    ///   - reviewerId: The user submitting the review
+    ///   - reviewedId: The user being reviewed
+    ///   - tradeId: The completed trade this review is for
+    ///   - rating: Rating 1-5
+    ///   - comment: Review comment
+    /// - Returns: ReviewResult indicating success or failure
+    func submitReviewWithVerification(
+        reviewerId: UUID,
+        reviewedId: UUID,
+        tradeId: UUID,
+        rating: Int,
+        comment: String
+    ) async throws -> ReviewResult {
+        
+        // 1. Cannot review yourself
+        guard reviewerId != reviewedId else {
+            return .cannotReviewSelf
+        }
+        
+        // 2. Validate rating
+        guard (1...5).contains(rating) else {
+            return .invalidRating
+        }
+        
+        // 3. Verify a completed trade exists between these users
+        let tradeExists = try await verifyCompletedTrade(
+            tradeId: tradeId,
+            userId1: reviewerId,
+            userId2: reviewedId
+        )
+        
+        guard tradeExists else {
+            print("❌ Review rejected: No completed trade found")
+            return .noCompletedTrade
+        }
+        
+        // 4. Check if already reviewed this trade
+        let alreadyReviewed = try await hasReviewedTrade(
+            reviewerId: reviewerId,
+            tradeId: tradeId
+        )
+        
+        guard !alreadyReviewed else {
+            print("❌ Review rejected: Already reviewed this trade")
+            return .alreadyReviewed
+        }
+        
+        // 5. Submit the review with trade reference
         struct ReviewData: Encodable {
             let reviewer_id: UUID
             let reviewed_user_id: UUID
+            let trade_id: UUID
             let rating: Int
             let comment: String
         }
-        let data = ReviewData(reviewer_id: reviewerId, reviewed_user_id: reviewedId, rating: rating, comment: comment)
+        
+        let data = ReviewData(
+            reviewer_id: reviewerId,
+            reviewed_user_id: reviewedId,
+            trade_id: tradeId,
+            rating: rating,
+            comment: comment
+        )
+        
         try await client.from("reviews").insert(data).execute()
+        print("✅ Review submitted successfully for trade: \(tradeId)")
+        
+        return .success
+    }
+    
+    /// Verifies that a completed trade exists between two users
+    private func verifyCompletedTrade(tradeId: UUID, userId1: UUID, userId2: UUID) async throws -> Bool {
+        struct TradeCheck: Decodable {
+            let id: UUID
+            let sender_id: UUID
+            let receiver_id: UUID
+            let status: String
+        }
+        
+        let trades: [TradeCheck] = try await client
+            .from("trades")
+            .select("id, sender_id, receiver_id, status")
+            .eq("id", value: tradeId)
+            .eq("status", value: "completed")
+            .execute()
+            .value
+        
+        guard let trade = trades.first else {
+            return false
+        }
+        
+        // Verify both users are participants in this trade
+        let participants = [trade.sender_id, trade.receiver_id]
+        return participants.contains(userId1) && participants.contains(userId2)
+    }
+    
+    /// Checks if a user has already reviewed a specific trade
+    private func hasReviewedTrade(reviewerId: UUID, tradeId: UUID) async throws -> Bool {
+        let count = try await client
+            .from("reviews")
+            .select("id", head: true, count: .exact)
+            .eq("reviewer_id", value: reviewerId)
+            .eq("trade_id", value: tradeId)
+            .execute()
+            .count
+        
+        return (count ?? 0) > 0
+    }
+    
+    /// Finds a completed trade between two users (for legacy support)
+    func findCompletedTrade(userId1: UUID, userId2: UUID) async throws -> UUID? {
+        struct TradeResult: Decodable {
+            let id: UUID
+        }
+        
+        let trades: [TradeResult] = try await client
+            .from("trades")
+            .select("id")
+            .eq("status", value: "completed")
+            .or("and(sender_id.eq.\(userId1),receiver_id.eq.\(userId2)),and(sender_id.eq.\(userId2),receiver_id.eq.\(userId1))")
+            .order("completed_at", ascending: false)
+            .limit(1)
+            .execute()
+            .value
+        
+        return trades.first?.id
+    }
+    
+    /// Checks if a review is pending for a completed trade
+    func canReviewTrade(reviewerId: UUID, tradeId: UUID) async throws -> Bool {
+        // First verify the trade is completed and user is participant
+        struct TradeCheck: Decodable {
+            let sender_id: UUID
+            let receiver_id: UUID
+            let status: String
+        }
+        
+        let trades: [TradeCheck] = try await client
+            .from("trades")
+            .select("sender_id, receiver_id, status")
+            .eq("id", value: tradeId)
+            .execute()
+            .value
+        
+        guard let trade = trades.first,
+              trade.status == "completed",
+              (trade.sender_id == reviewerId || trade.receiver_id == reviewerId) else {
+            return false
+        }
+        
+        // Check if already reviewed
+        let alreadyReviewed = try await hasReviewedTrade(reviewerId: reviewerId, tradeId: tradeId)
+        
+        return !alreadyReviewed
+    }
+    
+    /// Legacy method - maintains backwards compatibility but now requires verification
+    @available(*, deprecated, message: "Use submitReviewWithVerification for secure reviews")
+    func submitReview(reviewerId: UUID, reviewedId: UUID, rating: Int, comment: String) async throws {
+        // Try to find a completed trade between these users
+        guard let tradeId = try await findCompletedTrade(userId1: reviewerId, userId2: reviewedId) else {
+            throw NSError(domain: "ReviewError", code: 1, userInfo: [NSLocalizedDescriptionKey: "No completed trade found between users"])
+        }
+        
+        let result = try await submitReviewWithVerification(
+            reviewerId: reviewerId,
+            reviewedId: reviewedId,
+            tradeId: tradeId,
+            rating: rating,
+            comment: comment
+        )
+        
+        switch result {
+        case .success:
+            return
+        case .noCompletedTrade:
+            throw NSError(domain: "ReviewError", code: 1, userInfo: [NSLocalizedDescriptionKey: "No completed trade found"])
+        case .alreadyReviewed:
+            throw NSError(domain: "ReviewError", code: 2, userInfo: [NSLocalizedDescriptionKey: "Already reviewed this trade"])
+        case .cannotReviewSelf:
+            throw NSError(domain: "ReviewError", code: 3, userInfo: [NSLocalizedDescriptionKey: "Cannot review yourself"])
+        case .invalidRating:
+            throw NSError(domain: "ReviewError", code: 4, userInfo: [NSLocalizedDescriptionKey: "Invalid rating"])
+        case .error(let msg):
+            throw NSError(domain: "ReviewError", code: 5, userInfo: [NSLocalizedDescriptionKey: msg])
+        }
     }
     
     func fetchUserRating(userId: UUID) async throws -> Double {
@@ -399,6 +590,77 @@ class DatabaseService {
     }
     
     // MARK: - TRADES
+    
+    /// ✨ Issue #9: Cancel all trades involving a specific item before deletion
+    /// Returns the count of cancelled trades
+    @discardableResult
+    func cancelTradesForItem(itemId: UUID) async throws -> Int {
+        // Find all active trades where this item is involved
+        // (as offered item, wanted item, or in additional items arrays)
+        struct TradeToCancel: Decodable {
+            let id: UUID
+            let offered_item_id: UUID
+            let wanted_item_id: UUID
+            let additional_offered_item_ids: [UUID]?
+            let additional_wanted_item_ids: [UUID]?
+            let status: String
+        }
+        
+        // Fetch all non-completed, non-cancelled trades
+        let trades: [TradeToCancel] = try await client
+            .from("trades")
+            .select("id, offered_item_id, wanted_item_id, additional_offered_item_ids, additional_wanted_item_ids, status")
+            .in("status", values: TradeStatus.committedStatuses.map { $0.rawValue })
+            .execute()
+            .value
+        
+        // Filter trades that involve this item
+        var tradesToCancel: [UUID] = []
+        
+        for trade in trades {
+            var involvesItem = false
+            
+            // Check primary items
+            if trade.offered_item_id == itemId || trade.wanted_item_id == itemId {
+                involvesItem = true
+            }
+            
+            // Check additional offered items
+            if let additionalOffered = trade.additional_offered_item_ids,
+               additionalOffered.contains(itemId) {
+                involvesItem = true
+            }
+            
+            // Check additional wanted items
+            if let additionalWanted = trade.additional_wanted_item_ids,
+               additionalWanted.contains(itemId) {
+                involvesItem = true
+            }
+            
+            if involvesItem {
+                tradesToCancel.append(trade.id)
+            }
+        }
+        
+        // Cancel all found trades
+        if !tradesToCancel.isEmpty {
+            struct StatusUpdate: Encodable {
+                let status: String
+            }
+            
+            for tradeId in tradesToCancel {
+                try await client
+                    .from("trades")
+                    .update(StatusUpdate(status: TradeStatus.cancelled.rawValue))
+                    .eq("id", value: tradeId)
+                    .execute()
+            }
+            
+            print("🗑️ Cancelled \(tradesToCancel.count) trades for deleted item: \(itemId)")
+        }
+        
+        return tradesToCancel.count
+    }
     
     func fetchIncomingOffers(userId: UUID) async throws -> [TradeOffer] {
         return try await client
@@ -512,6 +774,7 @@ struct UserReview: Codable, Identifiable {
     let rating: Int
     let comment: String
     let createdAt: Date
+    let tradeId: UUID?  // ✨ Added trade reference
     
     // Optional: Hydrated reviewer profile
     var reviewerProfile: UserProfile?
@@ -523,5 +786,6 @@ struct UserReview: Codable, Identifiable {
         case rating
         case comment
         case createdAt = "created_at"
+        case tradeId = "trade_id"
     }
 }

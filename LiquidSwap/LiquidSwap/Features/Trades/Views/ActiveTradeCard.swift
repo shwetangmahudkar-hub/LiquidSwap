@@ -87,7 +87,7 @@ struct ActiveTradeCard: View {
             
             // Status / Chevron
             VStack(alignment: .trailing, spacing: 6) {
-                StatusBadge(status: trade.status)
+                StatusBadge(status: trade.status)  // ✨ Issue #10: Pass enum directly
                 
                 Image(systemName: "chevron.right")
                     .font(.caption)
@@ -103,14 +103,15 @@ struct ActiveTradeCard: View {
         )
     }
     
+    // ✨ Issue #10: Use enum directly instead of string comparison
     var statusColor: Color {
-        switch trade.status.lowercased() {
-        case "pending": return .orange
-        case "accepted": return .green
-        case "rejected": return .red
-        case "countered": return .purple
-        case "completed": return .gray
-        default: return .white
+        switch trade.status {
+        case .pending: return .orange
+        case .accepted: return .green
+        case .rejected: return .red
+        case .countered: return .purple
+        case .completed: return .gray
+        case .cancelled: return .gray
         }
     }
 }
@@ -131,22 +132,23 @@ struct BundleBadge: View {
     }
 }
 
+// ✨ Issue #10: Updated to accept TradeStatus enum
 struct StatusBadge: View {
-    let status: String
+    let status: TradeStatus
     
     var color: Color {
-        switch status.lowercased() {
-        case "pending": return .orange
-        case "accepted": return .green
-        case "rejected": return .red
-        case "countered": return .purple
-        case "completed": return .gray
-        default: return .white
+        switch status {
+        case .pending: return .orange
+        case .accepted: return .green
+        case .rejected: return .red
+        case .countered: return .purple
+        case .completed: return .gray
+        case .cancelled: return .gray
         }
     }
     
     var body: some View {
-        Text(status.capitalized)
+        Text(status.displayName)  // ✨ Use enum's displayName
             .font(.system(size: 10, weight: .bold))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)

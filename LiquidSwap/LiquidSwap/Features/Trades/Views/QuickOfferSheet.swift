@@ -30,15 +30,16 @@ struct QuickOfferSheet: View {
         var ids = Set<UUID>()
         
         for trade in tradeManager.activeTrades {
-            // Check active statuses
-            if ["pending", "accepted"].contains(trade.status) {
+            // Check active statuses - ✨ Issue #10: Use enum
+            if trade.status.isCommitted {
                 // Case A: I sent the offer -> My offered items are busy
                 if trade.senderId == myId {
                     ids.insert(trade.offeredItemId)
                     trade.additionalOfferedItemIds.forEach { ids.insert($0) }
                 }
                 // Case B: I received an offer AND accepted it -> My item is promised
-                if trade.receiverId == myId && trade.status == "accepted" {
+                // ✨ Issue #10: Use enum
+                if trade.receiverId == myId && trade.status == .accepted {
                     ids.insert(trade.wantedItemId)
                     trade.additionalWantedItemIds.forEach { ids.insert($0) }
                 }
